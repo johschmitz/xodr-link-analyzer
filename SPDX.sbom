@@ -1,0 +1,22 @@
+SPDXVersion: SPDX-2.3
+DataLicense: CC0-1.0
+SPDXID: SPDXRef-DOCUMENT
+DocumentName: xodr-link-analyzer
+
+PackageName: xodr-link-analyzer
+SPDXID: SPDXRef-Package-xodr-link-analyzer
+PackageLicenseConcluded: MIT
+PackageLicenseDeclared: MIT
+PackageCopyrightText: NOASSERTION
+Relationship: SPDXRef-DOCUMENT DESCRIBES SPDXRef-Package-xodr-link-analyzer
+
+PackageName: three.js
+SPDXID: SPDXRef-Package-three-js
+PackageVersion: 0.185.0
+PackageDownloadLocation: https://github.com/mrdoob/three.js/releases/tag/r185
+PackageLicenseConcluded: MIT
+PackageLicenseDeclared: MIT
+PackageCopyrightText: Copyright (c) 2010-2026 Three.js authors
+PackageHomePage: https://threejs.org
+External-Ref: purl pkg:npm/three@0.185.0
+Relationship: SPDXRef-Package-xodr-link-analyzer CONTAINS SPDXRef-Package-three-js

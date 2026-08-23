@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenDRIVE Link Analyzer</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231d2730'/%3E%3Ctext x='32' y='45' text-anchor='middle' font-size='36'%3E%F0%9F%94%97%3C/text%3E%3C/svg%3E">
+    <link rel="stylesheet" href="./viewer.css">
+    <script type="importmap">
+        {
+            "imports": {
+                        "three": "./libs/three/three.module.js",
+                        "three/addons/": "./libs/three/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div class="shell">
+        <div id="viewport"></div>
+
+        <button id="helpButton" class="help-toggle panel" type="button" aria-expanded="false" aria-controls="infoPanel">?</button>
+
+        <div class="chrome">
+            <aside class="panel sidebar">
+                <div class="title-block">
+                    <span class="eyebrow">OpenDRIVE Link Analyzer <span id="versionLabel" class="version-label"></span></span>
+                </div>
+                <div class="toolbar">
+                    <div class="toolbar-row toolbar-stack">
+                        <label class="primary file-button" for="fileInput">Load .xodr file</label>
+                        <input id="fileInput" type="file" accept=".xodr,.xml" hidden>
+                        <div id="fileStatus" class="toolbar-note">No file loaded.</div>
+                    </div>
+                    <div class="toolbar-row">
+                        <label class="toggle-control" for="refLineToggle">
+                            <span>Reference lines</span>
+                            <input id="refLineToggle" type="checkbox" checked aria-label="Reference lines">
+                        </label>
+                    </div>
+                    <div class="toolbar-row">
+                        <label class="toggle-control" for="markersToggle">
+                            <span>Link markers</span>
+                            <input id="markersToggle" type="checkbox" checked aria-label="Link markers">
+                        </label>
+                    </div>
+                    <button id="fitViewButton" class="ghost" type="button">Fit view</button>
+                </div>
+                <div class="tolerance-section">
+                    <div class="section-subtitle">Tolerances</div>
+                    <div class="tolerance-row">
+                        <label title="Max allowed positional gap in meters">Gap</label>
+                        <input id="tolGap" type="number" value="0.01" min="0" step="0.01">
+                        <span class="unit">m</span>
+                    </div>
+                    <div class="tolerance-row">
+                        <label title="Max allowed heading difference in degrees">Heading difference</label>
+                        <input id="tolHeading" type="number" value="0.5" min="0" step="0.1">
+                        <span class="unit">°</span>
+                    </div>
+                    <div class="tolerance-row">
+                        <label title="Max allowed elevation step in meters">Z step</label>
+                        <input id="tolZ" type="number" value="0.01" min="0" step="0.01">
+                        <span class="unit">m</span>
+                    </div>
+                    <button id="reanalyzeButton" class="ghost" type="button">Re-analyze</button>
+                </div>
+                <div class="stats">
+                    <div class="status-list">
+                        <div class="status-line"><span>Roads</span><span id="roadCountStat" class="stat-value">0</span></div>
+                        <div class="status-line"><span>Junctions</span><span id="junctionCountStat" class="stat-value">0</span></div>
+                        <div class="status-line ok"><span>OK links</span><span id="okCountStat" class="stat-value">0</span></div>
+                        <div class="status-line error"><span>Errors</span><span id="errorCountStat" class="stat-value">0</span></div>
+                        <div class="status-line warn"><span>Warnings</span><span id="warnCountStat" class="stat-value">0</span></div>
+                    </div>
+                </div>
+            </aside>
+        </div>
+
+        <section id="errorPanel" class="error-panel panel">
+            <div class="console-header console-header-row">
+                <div class="info-heading">Issues</div>
+                <div class="header-actions">
+                    <button id="filterToggle" class="ghost filter-toggle" type="button" aria-expanded="false" aria-controls="filterPanel">Filter ▾</button>
+                    <button id="copyAllButton" class="ghost filter-toggle" type="button" title="Copy all issues as text" disabled>⧉ Copy all</button>
+                </div>
+            </div>
+            <div id="filterPanel" class="filter-panel" hidden>
+                <div id="filterCheckboxes" class="filter-checkboxes"></div>
+                <button id="filterAllButton" class="ghost" type="button">Select all</button>
+                <button id="filterNoneButton" class="ghost" type="button">Select none</button>
+            </div>
+            <div id="issueList" class="issue-list">
+                <div class="issue-empty">Load an .xodr file to see analysis results.</div>
+            </div>
+        </section>
+
+        <div id="infoPanel" class="info-panel panel" hidden>
+            <div class="info-header">
+                <div class="info-heading">Legend</div>
+                <div class="info-actions">
+                    <button id="closeInfoButton" class="ghost console-close" type="button" aria-label="Close help" title="Close">&#10005;</button>
+                </div>
+            </div>
+            <div class="legend">
+                <div class="legend-group-title">Road linkage</div>
+                <div class="legend-item"><span class="legend-swatch" style="background:#2ce67d"></span>Correct link</div>
+                <div class="legend-item"><span class="legend-swatch" style="background:#f0c54c"></span>Warning</div>
+                <div class="legend-item"><span class="legend-swatch" style="background:#ff3b30"></span>Broken link</div>
+                <div class="legend-item"><span class="legend-swatch" style="background:#8a8f87"></span>Open end (no connection)</div>
+                <div class="legend-group-title">Lane linkage</div>
+                <div class="legend-item"><span class="legend-swatch" style="background:#2ce67d"></span>Correct link</div>
+                <div class="legend-item"><span class="legend-swatch" style="background:#f0c54c"></span>Unidirectional / lateral jump</div>
+                <div class="legend-item"><span class="legend-swatch" style="background:#ff3b30"></span>Broken / missing link</div>
+                <div class="legend-group-title">Reference line</div>
+                <div class="legend-item"><span class="legend-swatch" style="background:#9b59f6"></span>Tick = start, arrow = end</div>
+                <div class="legend-group-title">Road rendering</div>
+                <div class="legend-item"><span class="legend-swatch" style="background:#1fb6ff"></span>Lane/junction boundary</div>
+            </div>
+        </div>
+    </div>
+    <script type="module" src="./src/main.js"></script>
+</body>
+</html>
