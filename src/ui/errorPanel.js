@@ -76,6 +76,7 @@ export function createErrorPanel({ listElement, filterCheckboxes, onSelect }) {
     const ALL_ISSUE_CLASSES = [
         // Road links
         "Contact point gap at connection",
+        "Duplicate element id",
         "Missing road link target",
         "No road entry in junction connections",
         "Overlapping roads",
@@ -170,6 +171,11 @@ export function createErrorPanel({ listElement, filterCheckboxes, onSelect }) {
     // Highlight the issue in the list without moving the camera (used when
     // the user clicks a disc in the 3D view, which supplies its own focus).
     function selectIssueSilently(id) {
+        const issue = issues.find((item) => item.id === id);
+        if (issue && enabledClasses.delete(issue.title)) {
+            syncFilterClasses();
+            showToast(`Enabled issue filter: ${issue.title}`);
+        }
         selectedId = id;
         render();
         scrollSelectedIntoView();

@@ -1,6 +1,7 @@
 // Lane-level logical linkage checks (L1–L5).
 
 import { refPointAt, roadLength, laneWidthAt, innerEdgeOffset, roadEndMarkerPosition } from "../xodr/geometry.js";
+import { junctionFacingEnd } from "./junctionLaneLinks.js";
 
 function endpointLocation(road, endName) {
     return roadEndMarkerPosition(road, endName);
@@ -45,7 +46,21 @@ export function checkLaneLinks(model, lookups, issues) {
         checkSectionTransitions(road, issues);
 
         for (const [endName, link] of [["predecessor", road.predecessor], ["successor", road.successor]]) {
+            const contact = endName === "predecessor" ? "start" : "end";
+            const section = sectionAtContact(road, contact);
+            const direction = endName === "predecessor" ? "predecessor" : "successor";
             if (!link || !link.elementId) {
+                for (const lane of [...section.left, ...section.right]) {
+                    for (const laneLink of lane.links[direction]) {
+                        issues.push({
+                            severity: "error",
+                            category: "lane",
+                            title: "Missing lane link target",
+                            detail: `Road ${road.id} lane ${lane.id} declares a ${direction} link to lane ${laneLink.id}, but road ${road.id} has no ${endName} road link at its ${contact}.`,
+                            location: { roadIds: [road.id], laneIds: [lane.id, laneLink.id], position: endpointLocation(road, endName) },
+                        });
+                    }
+                }
                 continue;
             }
             const target = roadById.get(String(link.elementId));
@@ -216,6 +231,118 @@ function laneExtentAtEnd(road, section, lane, endName) {
     const outer = sign * outerAbs;
     const inner = outer - sign * width;
     return { inner: Math.min(inner, outer), outer: Math.max(inner, outer), width };
+}
+
+// Collects lane-link descriptors declared in junction XML: for each
+// <connection>, one entry per <laneLink from/to>. The "from" side is a lane
+// of the incoming road at its junction-facing end; the "to" side is a lane
+// of the connecting road at the connection's contact point. These pairings
+// exist ONLY here — incoming arm lanes carry no own <link> toward the
+// junction — so they get their own marker shape (hexagon) in the viewer.
+export function collectJunctionLaneLinks(model, lookups) {
+    const { roadById } = lookups;
+    const links = [];
+
+    for (const junction of model.junctions) {
+        for (const connection of junction.connections) {
+            const incoming = roadById.get(String(connection.incomingRoad));
+            const connecting = roadById.get(String(connection.connectingRoad));
+            if (!incoming || !connecting) {
+                continue;
+            }
+            const incomingEnd = junctionFacingEnd(incoming, junction.id);
+            if (!incomingEnd) {
+                continue;
+            }
+            const contactPoint = connection.contactPoint === "end" ? "end" : "start";
+            // Only lanes leading INTO the junction may be listed. Which sign
+            // that is depends on the driving direction at the junction-facing
+            // end: approaching at its end, right-side lanes (negative) drive
+            // into the junction; approaching at its start, left-side (positive).
+            const incomingSign = incomingEnd === "end" ? -1 : 1;
+            for (const laneLink of connection.laneLinks) {
+                const forbiddenOutgoing = Math.sign(laneLink.from) !== incomingSign;
+                links.push({
+                    from: { roadId: incoming.id, laneId: laneLink.from, contact: incomingEnd },
+                    to: { roadId: connecting.id, laneId: laneLink.to, contact: contactPoint },
+                    status: forbiddenOutgoing ? "error" : "ok",
+                    source: "junction",
+                    junctionId: junction.id,
+                    connectionId: connection.id,
+                });
+            }
+            collectConnectionOutgoingSide(junction, connection, connecting, contactPoint, lookups, links);
+        }
+    }
+    return links;
+}
+
+// Walks the OUTGOING side of a junction connection: past its contact point,
+// the connecting road must express its continuation through its OWN lane
+// <link> elements toward the next road, and that road's lanes must link
+// back. Emits one descriptor per declared link (ok / unidirectional / broken
+// stub) plus a broken stub for every lane that RECEIVES traffic via this
+// connection's <laneLink>s but declares no outgoing link at all — so a
+// missing continuation never goes visually unnoticed.
+function collectConnectionOutgoingSide(junction, connection, connecting, contactPoint, lookups, links) {
+    const { roadById } = lookups;
+    const farEnd = contactPoint === "start" ? "end" : "start";
+    const outwardRoadLink = farEnd === "end" ? connecting.successor : connecting.predecessor;
+    const outgoing = outwardRoadLink && outwardRoadLink.elementId
+        ? roadById.get(String(outwardRoadLink.elementId))
+        : null;
+    const backContact = outwardRoadLink?.contactPoint === "end" ? "end" : "start";
+
+    const farSection = sectionAtContact(connecting, farEnd);
+    const lanesC = [...farSection.left, ...farSection.right].filter((l) => l.id !== 0);
+    const forwardDir = farEnd === "end" ? "successor" : "predecessor";
+    const backwardDir = farEnd === "end" ? "predecessor" : "successor";
+
+    // Lanes that receive traffic through this connection (junction laneLink "to").
+    const fedLaneIds = new Set(connection.laneLinks.map((ll) => ll.to));
+
+    for (const lane of lanesC) {
+        const outLinks = lane.links[forwardDir];
+        if (outLinks.length === 0) {
+            if (fedLaneIds.has(lane.id)) {
+                links.push({
+                    from: { roadId: connecting.id, laneId: lane.id, contact: farEnd },
+                    to: null,
+                    status: "broken",
+                    source: "junction",
+                    junctionId: junction.id,
+                    connectionId: connection.id,
+                });
+            }
+            continue;
+        }
+
+        const outSection = outgoing ? sectionAtContact(outgoing, backContact) : null;
+        const outLanes = outSection ? [...outSection.left, ...outSection.right] : [];
+        for (const outLink of outLinks) {
+            const laneO = outLanes.find((l) => l.id === outLink.id);
+            if (!laneO) {
+                links.push({
+                    from: { roadId: connecting.id, laneId: lane.id, contact: farEnd },
+                    to: null,
+                    status: "broken",
+                    source: "junction",
+                    junctionId: junction.id,
+                    connectionId: connection.id,
+                });
+                continue;
+            }
+            const reciprocal = laneO.links[backwardDir].some((l) => l.id === lane.id);
+            links.push({
+                from: { roadId: connecting.id, laneId: lane.id, contact: farEnd },
+                to: { roadId: outgoing.id, laneId: laneO.id, contact: backContact },
+                status: reciprocal ? "ok" : "unidirectional",
+                source: "junction",
+                junctionId: junction.id,
+                connectionId: connection.id,
+            });
+        }
+    }
 }
 
 // Collects lane-link descriptors for visualization between directly linked

@@ -21,6 +21,7 @@ Checks each road's `<predecessor>` / `<successor>` elements.
 | Unidirectional road link | error | A links to B, but B has no matching link back to A (either no link at that end, or a link to a different element). |
 | Road contact point mismatch | error | The reverse link exists but declares the wrong contact point (`start` vs `end`). |
 | No road entry in junction connections | error | The road references a junction, but the junction has no `<connection>` with this road as `incomingRoad`. |
+| Duplicate element id | error | A road and a junction (or two of one kind) share the same id — ids must be unique across all roads and junctions. (`src/analysis/uniqueIds.js`) |
 
 ## Lane-level logical linkage (`src/analysis/laneLinks.js`)
 

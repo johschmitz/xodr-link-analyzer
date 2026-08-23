@@ -225,7 +225,8 @@ export function sampleLaneCenterLine(road, sectionIndex, laneId, sampleStep = SA
         }
         const halfWidth = laneWidthAt(lane, s - section.s) * 0.5;
         const sign = laneId > 0 ? 1 : -1;
-        const t = sign * (innerEdgeOffset(road, section, lane, s) - halfWidth + laneOffsetAt(road, s));
+        const t = laneOffsetAt(road, s)
+            + sign * (innerEdgeOffset(road, section, lane, s) - halfWidth);
         points.push(offsetPoint(ref, t));
     }
     return points;
@@ -258,8 +259,8 @@ export function sampleLaneBoundaries(road, sectionIndex, laneId, sampleStep = SA
         const inner = outer - laneWidthAt(lane, s - section.s);
         const sign = laneId > 0 ? 1 : -1;
         const laneOff = laneOffsetAt(road, s);
-        leftPoints.push(offsetPoint(ref, sign * (outer + laneOff)));
-        rightPoints.push(offsetPoint(ref, sign * (inner + laneOff)));
+        leftPoints.push(offsetPoint(ref, laneOff + sign * outer));
+        rightPoints.push(offsetPoint(ref, laneOff + sign * inner));
     }
     return { left: leftPoints, right: rightPoints };
 }

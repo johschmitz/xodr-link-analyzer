@@ -354,4 +354,478 @@
       </laneSection>
     </lanes>
   </road>
+  <road name="Junction arm W" id="9" length="50" junction="-1">
+    <link>
+      <successor elementType="junction" elementId="100"/>
+    </link>
+    <planView>
+      <geometry s="0" x="560" y="15" hdg="0" length="50">
+        <line/>
+      </geometry>
+    </planView>
+    <elevationProfile/>
+    <lateralProfile/>
+    <lanes>
+      <laneOffset s="0" a="0" b="0" c="0" d="0"/>
+      <laneSection s="0">
+        <left>
+          <lane id="1" type="driving" level="false">
+            <link/>
+            <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+          </lane>
+        </left>
+        <center>
+          <lane id="0" type="driving" level="false">
+            <link/>
+          </lane>
+        </center>
+        <right>
+          <lane id="-1" type="driving" level="false">
+            <link/>
+            <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+          </lane>
+        </right>
+      </laneSection>
+    </lanes>
+  </road>
+  <road name="Junction arm E" id="10" length="50" junction="-1">
+    <link>
+      <predecessor elementType="junction" elementId="100"/>
+    </link>
+    <planView>
+      <geometry s="0" x="630" y="15" hdg="0" length="50">
+        <line/>
+      </geometry>
+    </planView>
+    <elevationProfile/>
+    <lateralProfile/>
+    <lanes>
+      <laneOffset s="0" a="0" b="0" c="0" d="0"/>
+      <laneSection s="0">
+        <left>
+          <lane id="1" type="driving" level="false">
+            <link/>
+            <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+          </lane>
+        </left>
+        <center>
+          <lane id="0" type="driving" level="false">
+            <link/>
+          </lane>
+        </center>
+        <right>
+          <lane id="-1" type="driving" level="false">
+            <link/>
+            <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+          </lane>
+        </right>
+      </laneSection>
+    </lanes>
+  </road>
+  <road name="Junction arm S" id="11" length="40" junction="-1">
+    <link>
+      <successor elementType="junction" elementId="100"/>
+    </link>
+    <planView>
+      <geometry s="0" x="620" y="-35" hdg="1.5707963267948966" length="40">
+        <line/>
+      </geometry>
+    </planView>
+    <elevationProfile/>
+    <lateralProfile/>
+    <lanes>
+      <laneOffset s="0" a="0" b="0" c="0" d="0"/>
+      <laneSection s="0">
+        <left>
+          <lane id="1" type="driving" level="false">
+            <link/>
+            <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+          </lane>
+        </left>
+        <center>
+          <lane id="0" type="driving" level="false">
+            <link/>
+          </lane>
+        </center>
+        <right>
+          <lane id="-1" type="driving" level="false">
+            <link/>
+            <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+          </lane>
+        </right>
+      </laneSection>
+    </lanes>
+  </road>
+  <road name="Junction arm N" id="12" length="50" junction="-1">
+    <link>
+      <predecessor elementType="junction" elementId="100"/>
+    </link>
+    <planView>
+      <geometry s="0" x="620" y="25" hdg="1.5707963267948966" length="50">
+        <line/>
+      </geometry>
+    </planView>
+    <elevationProfile/>
+    <lateralProfile/>
+    <lanes>
+      <laneOffset s="0" a="0" b="0" c="0" d="0"/>
+      <laneSection s="0">
+        <left>
+          <lane id="1" type="driving" level="false">
+            <link/>
+            <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+          </lane>
+        </left>
+        <center>
+          <lane id="0" type="driving" level="false">
+            <link/>
+          </lane>
+        </center>
+        <right>
+          <lane id="-1" type="driving" level="false">
+            <link/>
+            <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+          </lane>
+        </right>
+      </laneSection>
+    </lanes>
+  </road>
+  <road name="Conn W-E (straight)" id="101" length="20" junction="100">
+    <link/>
+    <planView>
+      <geometry s="0" x="610" y="15" hdg="0" length="20">
+        <line/>
+      </geometry>
+    </planView>
+    <elevationProfile/>
+    <lateralProfile/>
+    <lanes>
+      <laneSection s="0">
+        <center>
+          <lane id="0" type="driving" level="false">
+            <link/>
+          </lane>
+        </center>
+        <right>
+          <lane id="-1" type="driving" level="false">
+            <link/>
+            <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+          </lane>
+        </right>
+      </laneSection>
+    </lanes>
+  </road>
+  <road name="Conn E-W (straight)" id="102" length="20" junction="100">
+    <link/>
+    <planView>
+      <geometry s="0" x="630" y="15" hdg="3.141592653589793" length="20">
+        <line/>
+      </geometry>
+    </planView>
+    <elevationProfile/>
+    <lateralProfile/>
+    <lanes>
+      <laneSection s="0">
+        <center>
+          <lane id="0" type="driving" level="false">
+            <link/>
+          </lane>
+        </center>
+        <right>
+          <lane id="-1" type="driving" level="false">
+            <link/>
+            <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+          </lane>
+        </right>
+      </laneSection>
+    </lanes>
+  </road>
+  <road name="Conn S-N (straight)" id="103" length="20" junction="100">
+    <link/>
+    <planView>
+      <geometry s="0" x="620" y="5" hdg="1.5707963267948966" length="20">
+        <line/>
+      </geometry>
+    </planView>
+    <elevationProfile/>
+    <lateralProfile/>
+    <lanes>
+      <laneSection s="0">
+        <center>
+          <lane id="0" type="driving" level="false">
+            <link/>
+          </lane>
+        </center>
+        <right>
+          <lane id="-1" type="driving" level="false">
+            <link/>
+            <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+          </lane>
+        </right>
+      </laneSection>
+    </lanes>
+  </road>
+  <road name="Conn N-S (straight)" id="104" length="20" junction="100">
+    <link/>
+    <planView>
+      <geometry s="0" x="620" y="25" hdg="4.71238898038469" length="20">
+        <line/>
+      </geometry>
+    </planView>
+    <elevationProfile/>
+    <lateralProfile/>
+    <lanes>
+      <laneSection s="0">
+        <center>
+          <lane id="0" type="driving" level="false">
+            <link/>
+          </lane>
+        </center>
+        <right>
+          <lane id="-1" type="driving" level="false">
+            <link/>
+            <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+          </lane>
+        </right>
+      </laneSection>
+    </lanes>
+  </road>
+  <road name="Conn W-S (right turn)" id="105" length="15.707963267948966" junction="100">
+    <link/>
+    <planView>
+      <geometry s="0" x="610" y="15" hdg="0" length="15.707963267948966">
+        <arc curvature="-0.1"/>
+      </geometry>
+    </planView>
+    <elevationProfile/>
+    <lateralProfile/>
+    <lanes>
+      <laneSection s="0">
+        <center>
+          <lane id="0" type="driving" level="false">
+            <link/>
+          </lane>
+        </center>
+        <right>
+          <lane id="-1" type="driving" level="false">
+            <link/>
+            <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+          </lane>
+        </right>
+      </laneSection>
+    </lanes>
+  </road>
+  <road name="Conn S-E (right turn)" id="106" length="15.707963267948966" junction="100">
+    <link/>
+    <planView>
+      <geometry s="0" x="620" y="5" hdg="1.5707963267948966" length="15.707963267948966">
+        <arc curvature="-0.1"/>
+      </geometry>
+    </planView>
+    <elevationProfile/>
+    <lateralProfile/>
+    <lanes>
+      <laneSection s="0">
+        <center>
+          <lane id="0" type="driving" level="false">
+            <link/>
+          </lane>
+        </center>
+        <right>
+          <lane id="-1" type="driving" level="false">
+            <link/>
+            <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+          </lane>
+        </right>
+      </laneSection>
+    </lanes>
+  </road>
+  <road name="Conn E-N (right turn)" id="107" length="15.707963267948966" junction="100">
+    <link/>
+    <planView>
+      <geometry s="0" x="630" y="15" hdg="3.141592653589793" length="15.707963267948966">
+        <arc curvature="-0.1"/>
+      </geometry>
+    </planView>
+    <elevationProfile/>
+    <lateralProfile/>
+    <lanes>
+      <laneSection s="0">
+        <center>
+          <lane id="0" type="driving" level="false">
+            <link/>
+          </lane>
+        </center>
+        <right>
+          <lane id="-1" type="driving" level="false">
+            <link/>
+            <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+          </lane>
+        </right>
+      </laneSection>
+    </lanes>
+  </road>
+  <road name="Conn N-W (right turn)" id="108" length="15.707963267948966" junction="100">
+    <link/>
+    <planView>
+      <geometry s="0" x="620" y="25" hdg="4.71238898038469" length="15.707963267948966">
+        <arc curvature="-0.1"/>
+      </geometry>
+    </planView>
+    <elevationProfile/>
+    <lateralProfile/>
+    <lanes>
+      <laneSection s="0">
+        <center>
+          <lane id="0" type="driving" level="false">
+            <link/>
+          </lane>
+        </center>
+        <right>
+          <lane id="-1" type="driving" level="false">
+            <link/>
+            <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+          </lane>
+        </right>
+      </laneSection>
+    </lanes>
+  </road>
+  <road name="Conn W-N (left turn)" id="109" length="15.707963267948966" junction="100">
+    <link/>
+    <planView>
+      <geometry s="0" x="610" y="15" hdg="0" length="15.707963267948966">
+        <arc curvature="0.1"/>
+      </geometry>
+    </planView>
+    <elevationProfile/>
+    <lateralProfile/>
+    <lanes>
+      <laneSection s="0">
+        <left>
+          <lane id="1" type="driving" level="false">
+            <link/>
+            <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+          </lane>
+        </left>
+        <center>
+          <lane id="0" type="driving" level="false">
+            <link/>
+          </lane>
+        </center>
+      </laneSection>
+    </lanes>
+  </road>
+  <road name="Conn N-E (left turn)" id="110" length="15.707963267948966" junction="100">
+    <link/>
+    <planView>
+      <geometry s="0" x="620" y="25" hdg="4.71238898038469" length="15.707963267948966">
+        <arc curvature="0.1"/>
+      </geometry>
+    </planView>
+    <elevationProfile/>
+    <lateralProfile/>
+    <lanes>
+      <laneSection s="0">
+        <right>
+          <lane id="-1" type="driving" level="false">
+            <link/>
+            <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+          </lane>
+        </right>
+        <center>
+          <lane id="0" type="driving" level="false">
+            <link/>
+          </lane>
+        </center>
+      </laneSection>
+    </lanes>
+  </road>
+  <road name="Conn E-S (left turn)" id="111" length="15.707963267948966" junction="100">
+    <link/>
+    <planView>
+      <geometry s="0" x="630" y="15" hdg="3.141592653589793" length="15.707963267948966">
+        <arc curvature="0.1"/>
+      </geometry>
+    </planView>
+    <elevationProfile/>
+    <lateralProfile/>
+    <lanes>
+      <laneSection s="0">
+        <right>
+          <lane id="-1" type="driving" level="false">
+            <link/>
+            <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+          </lane>
+        </right>
+        <center>
+          <lane id="0" type="driving" level="false">
+            <link/>
+          </lane>
+        </center>
+      </laneSection>
+    </lanes>
+  </road>
+  <road name="Conn S-W (left turn)" id="112" length="15.707963267948966" junction="100">
+    <link/>
+    <planView>
+      <geometry s="0" x="620" y="5" hdg="1.5707963267948966" length="15.707963267948966">
+        <arc curvature="0.1"/>
+      </geometry>
+    </planView>
+    <elevationProfile/>
+    <lateralProfile/>
+    <lanes>
+      <laneSection s="0">
+        <right>
+          <lane id="-1" type="driving" level="false">
+            <link/>
+            <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
+          </lane>
+        </right>
+        <center>
+          <lane id="0" type="driving" level="false">
+            <link/>
+          </lane>
+        </center>
+      </laneSection>
+    </lanes>
+  </road>
+  <junction name="Four way junction" id="100">
+    <connection id="0" incomingRoad="9" connectingRoad="101" contactPoint="end">
+      <laneLink from="-1" to="-1"/>
+    </connection>
+    <connection id="1" incomingRoad="10" connectingRoad="102" contactPoint="start">
+      <laneLink from="1" to="-1"/>
+    </connection>
+    <connection id="2" incomingRoad="11" connectingRoad="103" contactPoint="start">
+      <laneLink from="-1" to="-1"/>
+    </connection>
+    <connection id="3" incomingRoad="12" connectingRoad="104" contactPoint="start">
+      <laneLink from="1" to="-1"/>
+    </connection>
+    <connection id="4" incomingRoad="9" connectingRoad="105" contactPoint="start">
+      <laneLink from="-1" to="-1"/>
+    </connection>
+    <connection id="5" incomingRoad="11" connectingRoad="106" contactPoint="start">
+      <laneLink from="-1" to="-1"/>
+    </connection>
+    <connection id="6" incomingRoad="10" connectingRoad="107" contactPoint="start">
+      <laneLink from="1" to="-1"/>
+    </connection>
+    <connection id="7" incomingRoad="12" connectingRoad="108" contactPoint="start">
+      <laneLink from="1" to="-1"/>
+    </connection>
+    <connection id="8" incomingRoad="9" connectingRoad="109" contactPoint="start">
+      <laneLink from="-1" to="1"/>
+    </connection>
+    <connection id="9" incomingRoad="12" connectingRoad="110" contactPoint="start">
+      <laneLink from="1" to="-1"/>
+    </connection>
+    <connection id="10" incomingRoad="10" connectingRoad="111" contactPoint="start">
+      <laneLink from="1" to="-1"/>
+    </connection>
+    <connection id="11" incomingRoad="11" connectingRoad="112" contactPoint="start">
+      <laneLink from="-1" to="-1"/>
+    </connection>
+  </junction>
 </OpenDRIVE>

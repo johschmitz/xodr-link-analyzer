@@ -6,10 +6,13 @@ import { checkLaneLinks } from "./laneLinks.js";
 import { checkGeometryLinks } from "./geometryLinks.js";
 import { checkOverlappingRoads } from "./overlappingRoads.js";
 import { checkJunctionLaneLinks } from "./junctionLaneLinks.js";
+import { checkUniqueIds } from "./uniqueIds.js";
 
 export function analyze(model, tolerances) {
     const lookups = buildModel(model);
     const issues = [];
+
+    checkUniqueIds(model, lookups, issues);
 
     checkRoadLinks(model, lookups, issues);
     checkLaneLinks(model, lookups, issues);

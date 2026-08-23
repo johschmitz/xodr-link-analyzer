@@ -13,7 +13,7 @@
 // lives in the connecting road's and outgoing road's own <link> elements, not
 // in the junction XML.
 
-import { roadEndMarkerPosition } from "../xodr/geometry.js";
+import { roadEndMarkerPosition, roadLength, laneWidthAt, laneOffsetAt, innerEdgeOffset, refPointAt, offsetPoint } from "../xodr/geometry.js";
 
 // The end of a road that faces the given junction, or null.
 export function junctionFacingEnd(road, junctionId) {
@@ -95,6 +95,7 @@ function checkConnectionLaneLinks(junction, connection, incoming, incomingEnd, c
     const incomingSection = sectionAtContact(incoming, incomingEnd);
     const incomingLanes = [...incomingSection.left, ...incomingSection.right];
     const towardJunctionDir = incomingEnd === "start" ? "predecessor" : "successor";
+    const incomingSign = incomingEnd === "end" ? -1 : 1;
     const seenFrom = new Set();
 
     for (const laneLink of connection.laneLinks) {
@@ -143,12 +144,12 @@ function checkConnectionLaneLinks(junction, connection, incoming, incomingEnd, c
             continue;
         }
 
-        // Only lanes LEADING INTO the junction may appear as "from". A
-        // "from" lane with no own link toward the junction would describe the
-        // outgoing driving direction — that linkage belongs in the connecting
-        // road's and outgoing road's own <link> elements, never in the
-        // junction XML.
-        if (lane.links[towardJunctionDir].length === 0) {
+        // Only lanes LEADING INTO the junction may appear as "from". For an
+        // incoming road ending at the junction, that is the negative-side
+        // lane; for one starting at the junction, it is the positive-side
+        // lane. Incoming road lane links are intentionally not used here:
+        // the junction laneLink already owns this crossing.
+        if (Math.sign(lane.id) !== incomingSign) {
             issues.push({
                 severity: "error",
                 category: "lane",
@@ -202,6 +203,19 @@ function checkConnectionLaneLinks(junction, connection, incoming, incomingEnd, c
                     position: endpointLocation(connecting, contactPoint),
                 },
             });
+        } else {
+            const targetLane = contactLanes.find((l) => l.id === laneLink.to);
+            checkJunctionLateralJump(
+                junction,
+                connection,
+                incoming,
+                incomingEnd,
+                lane,
+                connecting,
+                contactPoint,
+                targetLane,
+                issues
+            );
         }
     }
 
@@ -209,6 +223,59 @@ function checkConnectionLaneLinks(junction, connection, incoming, incomingEnd, c
     // contact point. When the connecting road declares predecessor/successor
     // lane links there, they must agree with the junction's laneLinks.
     checkConnectingRoadAgreement(junction, connection, incoming, incomingEnd, connecting, contactPoint, issues);
+}
+
+function checkJunctionLateralJump(junction, connection, incoming, incomingEnd, incomingLane, connecting, contactPoint, connectingLane, issues) {
+    const centerA = laneCenterAtContact(incoming, incomingLane, incomingEnd);
+    const centerB = laneCenterAtContact(connecting, connectingLane, contactPoint);
+    if (!centerA || !centerB) {
+        return;
+    }
+    const dx = centerB.point.x - centerA.point.x;
+    const dy = centerB.point.y - centerA.point.y;
+    const lateralShift = Math.abs(-Math.sin(centerA.heading) * dx + Math.cos(centerA.heading) * dy);
+    const smallerWidth = Math.min(centerA.width, centerB.width);
+    if (lateralShift <= smallerWidth * 0.5 - 0.05) {
+        return;
+    }
+    issues.push({
+        severity: "warning",
+        category: "lane",
+        title: "Lane link lateral jump",
+        detail: `Junction ${junction.id} connection ${connection.id}: road ${incoming.id} lane ${incomingLane.id} → connecting road ${connecting.id} lane ${connectingLane.id} shifts ${lateralShift.toFixed(2)} m laterally across lanes ${smallerWidth.toFixed(2)} m wide at the connection.`,
+        location: {
+            roadIds: [incoming.id, connecting.id],
+            laneIds: [incomingLane.id, connectingLane.id],
+            junctionId: junction.id,
+            position: endpointLocation(connecting, contactPoint),
+        },
+    });
+}
+
+function laneCenterAtContact(road, lane, contactPoint) {
+    const section = contactPoint === "end"
+        ? road.laneSections[road.laneSections.length - 1]
+        : road.laneSections[0];
+    if (!section) {
+        return null;
+    }
+    const s = contactPoint === "end" ? roadLength(road) : section.s;
+    const width = laneWidthAt(lane, Math.max(s - section.s, 0));
+    if (width <= 0) {
+        return null;
+    }
+    const outerAbs = innerEdgeOffset(road, section, lane, Math.min(s, roadLength(road)));
+    const sign = lane.id > 0 ? 1 : -1;
+    const lateral = laneOffsetAt(road, s) + sign * (outerAbs - width * 0.5);
+    const ref = refPointAt(road, s);
+    if (!ref) {
+        return null;
+    }
+    return {
+        point: offsetPoint(ref, lateral),
+        heading: ref.hdg,
+        width,
+    };
 }
 
 // J3: the connecting road's own lane <link> entries at the junction contact

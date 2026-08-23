@@ -6,7 +6,7 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { roadLength, sampleReferenceLine, sampleLaneBoundaries, refPointAt, laneWidthAt, laneOffsetAt, offsetPoint, roadEndMarkerPosition } from "./xodr/geometry.js";
-import { collectLaneLinks } from "./analysis/laneLinks.js";
+import { collectLaneLinks, collectJunctionLaneLinks } from "./analysis/laneLinks.js";
 import { buildModel as buildLookups } from "./xodr/model.js";
 
 const SKY_COLOR = "#cadcee";
@@ -85,6 +85,8 @@ export function createViewer(container) {
         refLineGroup,
         markerGroup,
         markers: [],
+        hoverGraph: { roads: new Map(), lanes: new Map() },
+        hoverTarget: null,
         fitView() {
             const box = new THREE.Box3().setFromObject(roadGroup);
             if (box.isEmpty()) {
@@ -129,6 +131,36 @@ export function createViewer(container) {
 
     renderer.domElement.addEventListener("pointerdown", (event) => {
         downPos = { x: event.clientX, y: event.clientY };
+    });
+
+    renderer.domElement.addEventListener("pointermove", (event) => {
+        pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+        pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        raycaster.setFromCamera(pointer, camera);
+        const hit = raycaster.intersectObjects(markerGroup.children, false)
+            .filter((candidate) => candidate.object.visible && candidate.object.userData.hoverTarget)
+            .reduce((best, candidate) => {
+                if (!best) {
+                    return candidate;
+                }
+                const ro = candidate.object.renderOrder || 0;
+                const bestRo = best.object.renderOrder || 0;
+                return ro > bestRo || (ro === bestRo && candidate.distance < best.distance)
+                    ? candidate
+                    : best;
+            }, null);
+        const target = hit?.object.userData.hoverTarget || null;
+        if (JSON.stringify(target) !== JSON.stringify(viewer.hoverTarget)) {
+            viewer.hoverTarget = target;
+            applyHoverHighlight(viewer);
+        }
+    });
+
+    renderer.domElement.addEventListener("pointerleave", () => {
+        if (viewer.hoverTarget) {
+            viewer.hoverTarget = null;
+            applyHoverHighlight(viewer);
+        }
     });
 
     renderer.domElement.addEventListener("pointerup", (event) => {
@@ -205,6 +237,110 @@ export function clearGroup(group) {
             }
         });
     }
+}
+
+function applyHoverHighlight(viewer) {
+    const primaryRoads = new Set();
+    const secondaryRoads = new Set();
+    const primaryLanes = new Set();
+    const secondaryLanes = new Set();
+    const target = viewer.hoverTarget;
+
+    if (target?.type === "road") {
+        primaryRoads.add(String(target.roadId));
+        for (const roadId of viewer.hoverGraph.roads.get(String(target.roadId)) || []) {
+            secondaryRoads.add(roadId);
+        }
+    } else if (target?.type === "lane") {
+        const laneKey = hoverLaneKey(target.roadId, target.laneId);
+        primaryLanes.add(laneKey);
+        for (const connected of viewer.hoverGraph.lanes.get(laneKey) || []) {
+            secondaryLanes.add(connected);
+        }
+    } else if (target?.type === "lanePair") {
+        for (const lane of target.lanes) {
+            primaryLanes.add(hoverLaneKey(lane.roadId, lane.laneId));
+        }
+    }
+
+    viewer.roadGroup.traverse((node) => {
+        if (!node.isMesh || !node.userData.hoverRoadId) {
+            return;
+        }
+        const roadId = String(node.userData.hoverRoadId);
+        const laneKey = node.userData.hoverLaneId == null
+            ? null
+            : hoverLaneKey(roadId, node.userData.hoverLaneId);
+        const material = node.material;
+        if (!material?.color) {
+            return;
+        }
+        if (!node.userData.hoverBaseColor) {
+            node.userData.hoverBaseColor = material.color.getHex();
+        }
+        const isPrimary = primaryRoads.has(roadId) || primaryLanes.has(laneKey);
+        const isSecondary = secondaryRoads.has(roadId) || secondaryLanes.has(laneKey);
+        if (isPrimary) {
+            material.color.set(0xf5c542);
+        } else if (isSecondary) {
+            material.color.set(0x38bdf8);
+        } else {
+            material.color.set(node.userData.hoverBaseColor);
+        }
+        node.position.z = isPrimary || isSecondary ? 0.015 : 0;
+        node.renderOrder = isPrimary || isSecondary ? 1 : 0;
+    });
+}
+
+function hoverLaneKey(roadId, laneId) {
+    return `${roadId}:${laneId}`;
+}
+
+function buildHoverGraph(model) {
+    const roads = new Map();
+    const lanes = new Map();
+    const add = (map, a, b) => {
+        const first = String(a);
+        const second = String(b);
+        if (!map.has(first)) map.set(first, new Set());
+        if (!map.has(second)) map.set(second, new Set());
+        map.get(first).add(second);
+        map.get(second).add(first);
+    };
+
+    for (const road of model.roads) {
+        for (const link of [road.predecessor, road.successor]) {
+            if (!link?.elementId || link.elementType === "junction") continue;
+            const target = model.roads.find((candidate) => String(candidate.id) === String(link.elementId));
+            if (!target) continue;
+            add(roads, road.id, target.id);
+            const direction = link === road.predecessor ? "predecessor" : "successor";
+            for (const section of road.laneSections) {
+                for (const lane of [...section.left, ...section.right]) {
+                    for (const laneLink of lane.links[direction] || []) {
+                        add(lanes, hoverLaneKey(road.id, lane.id), hoverLaneKey(target.id, laneLink.id));
+                    }
+                }
+            }
+        }
+    }
+
+    for (const junction of model.junctions) {
+        for (const connection of junction.connections) {
+            add(roads, connection.incomingRoad, connection.connectingRoad);
+            for (const laneLink of connection.laneLinks) {
+                add(lanes, hoverLaneKey(connection.incomingRoad, laneLink.from), hoverLaneKey(connection.connectingRoad, laneLink.to));
+            }
+        }
+    }
+    return { roads, lanes };
+}
+
+function setHoverTarget(mesh, target) {
+    if (mesh) {
+        mesh.userData.hoverTarget = target;
+    }
+    return mesh;
 }
 
 function appendPolyline(target, points) {
@@ -309,8 +445,8 @@ function buildJunctionOutlines(viewer, model) {
             const laneOff = laneOffsetAt(road, s);
             const left = offsetPoint(ref, leftWidth + laneOff);
             const right = offsetPoint(ref, -rightWidth + laneOff);
-            corners.push({ x: left.x, y: left.y, z: left.z });
-            corners.push({ x: right.x, y: right.y, z: right.z });
+            corners.push({ x: left.x, y: left.y, z: left.z, roadId });
+            corners.push({ x: right.x, y: right.y, z: right.z, roadId });
         }
 
         if (corners.length < 2) {
@@ -323,9 +459,15 @@ function buildJunctionOutlines(viewer, model) {
         const cy = corners.reduce((sum, p) => sum + p.y, 0) / corners.length;
         corners.sort((a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx));
 
+        // Only the four bridging lines between ADJACENT arms' corners: the
+        // mouth caps themselves are already drawn by each road's own end-cap
+        // outline, so consecutive corners of the SAME road are skipped.
         for (let i = 0; i < corners.length; i += 1) {
             const a = corners[i];
             const b = corners[(i + 1) % corners.length];
+            if (a.roadId === b.roadId) {
+                continue;
+            }
             positions.push(a.x, a.y, a.z + 0.06, b.x, b.y, b.z + 0.06);
         }
     }
@@ -339,7 +481,13 @@ function buildJunctionOutlines(viewer, model) {
             opacity: 0.55,
             toneMapped: false,
             linewidth: 1.2, // pixels
+            // The bridges cross the turning roads' asphalt bands where other
+            // fat-line outlines sit at the exact same height (z + 0.06);
+            // depth-testing there makes half the polygon lose the depth fight.
+            // Draw on top of road geometry instead (like the reference lines).
+            depthTest: false,
         }));
+        outline.renderOrder = 2;
         viewer.roadGroup.add(outline);
     }
 }
@@ -367,6 +515,7 @@ const LANE_LINK_COLORS = {
     ok: 0x2ce67d,
     unidirectional: 0xf0c54c,
     broken: 0xff3b30,
+    error: 0xff3b30,
 };
 
 // World position of a lane's center line at a road end (start/end contact).
@@ -386,7 +535,7 @@ function laneCenterEndpoint(road, laneId, contact) {
     }
     const halfWidth = laneWidthAt(lane, Math.max(s - section.s, 0)) * 0.5;
     const sign = laneId > 0 ? 1 : -1;
-    const t = sign * (laneOffsetAt(road, s))
+    const t = laneOffsetAt(road, s)
         + sign * (innerEdgeOffsetTotal(road, section, lane, s) - halfWidth);
     const p = offsetPoint(ref, t);
     return { x: p.x, y: p.y, z: p.z + 0.15 };
@@ -425,9 +574,20 @@ function stubEndpoint(road, laneId, contact, pa) {
 // Green = ok, yellow = unidirectional, red = broken/missing.
 export function buildLaneLinkMarkers(viewer, model, lookups, issues = []) {
     currentIssuesRef.issues = issues;
-    const links = collectLaneLinks(model, lookups);
+    const links = [
+        ...collectLaneLinks(model, lookups),
+        ...collectJunctionLaneLinks(model, lookups),
+    ];
 
+    // All hexagons sharing the same rendered endpoint use one narrow slot set,
+    // regardless of whether their label is a lane id or "!".
+    const junctionSlots = buildJunctionHexSlots(links, lookups);
+    const placedJunctionHexes = [];
     for (const link of links) {
+        // Junction-XML lane links get hexagon markers so the two declaration
+        // mechanisms (road-level <link> vs junction <laneLink>) stay visually
+        // apart; road-level links keep circles.
+        const shape = link.source === "junction" ? "hexagon" : "circle";
         const roadA = lookups.roadById.get(String(link.from.roadId));
         if (!roadA) {
             continue;
@@ -459,11 +619,34 @@ export function buildLaneLinkMarkers(viewer, model, lookups, issues = []) {
             colorA = LANE_LINK_COLORS.broken;
         }
 
+        // Junction-sourced links get two extra "!" cases:
+        // - Forbidden outgoing laneLink in junction XML (from-lane drives AWAY
+        //   from the junction): red "!" on the from side.
+        // - Missing continuation on the outgoing side: the descriptor's from
+        //   side is the lane that SHOULD carry the outgoing link; draw a red
+        //   "!" hexagon there with a stub pointing outward, mirroring the
+        //   road-to-road broken-link case.
+        if (link.source === "junction" && link.status === "error") {
+            labelA = "!";
+            colorA = LANE_LINK_COLORS.error;
+        }
+        if (link.source === "junction" && link.to === null && link.status === "broken") {
+            labelA = "!";
+            colorA = LANE_LINK_COLORS.broken;
+        }
+
         // Pull each disc back into its own road/lane so both sides are apart.
-        const posA = pullIntoRoad(roadA, link.from.contact, pa);
+        let posA = pullIntoRoad(roadA, link.from.contact, pa);
         const headingA = roadHeadingAt(roadA, link.from.contact === "start" ? 0 : roadLength(roadA));
-        const meshA = addSurfaceLabel(viewer.markerGroup, labelA, colorA, posA.x, posA.y, posA.z + 0.02, 1.3, "circle", headingRotation(headingA));
+        if (link.source === "junction") {
+            posA = offsetJunctionHex(posA, junctionSlots.get(link)?.from);
+            posA = separateExactJunctionHex(posA, placedJunctionHexes);
+        }
+        const meshA = addSurfaceLabel(viewer.markerGroup, labelA, colorA, posA.x, posA.y, posA.z + 0.02, link.source === "junction" ? 0.75 : 1.3, shape, headingRotation(headingA));
         if (meshA) {
+            if (link.source === "junction") {
+                meshA.userData.hoverTarget = lanePairHoverTarget(link);
+            }
             meshA.userData.issueId = unidirectional && pb
                 ? null
                 : nearestIssueId(currentIssuesRef.issues, pa, link.from.roadId, "lane", [link.from.laneId, link.to?.laneId]);
@@ -476,9 +659,22 @@ export function buildLaneLinkMarkers(viewer, model, lookups, issues = []) {
         } else {
             const roadB = lookups.roadById.get(String(link.to.roadId));
             pb = pullIntoRoad(roadB, link.to.contact, pb);
+            // Junction-inner side: shrink the hexagon and fan markers sharing
+            // this endpoint out sideways (perpendicular to the connecting
+            // road) so overlapping junction geometry can't hide them.
+            let sizeB = 1.3;
+            if (link.source === "junction") {
+                sizeB = 0.6;
+                const heading = roadHeadingAt(roadB, link.to.contact === "start" ? 0 : roadLength(roadB));
+                pb = offsetJunctionHex(pb, junctionSlots.get(link)?.to);
+                pb = separateExactJunctionHex(pb, placedJunctionHexes);
+            }
             const headingB = roadHeadingAt(roadB, link.to.contact === "start" ? 0 : roadLength(roadB));
-            const meshB = addSurfaceLabel(viewer.markerGroup, labelB, color, pb.x, pb.y, pb.z + 0.02, 1.3, "circle", headingRotation(headingB));
+            const meshB = addSurfaceLabel(viewer.markerGroup, labelB, color, pb.x, pb.y, pb.z + 0.02, sizeB, shape, headingRotation(headingB));
             if (meshB) {
+                if (link.source === "junction") {
+                    meshB.userData.hoverTarget = lanePairHoverTarget(link);
+                }
                 meshB.userData.issueId = nearestIssueId(currentIssuesRef.issues, pb, link.to.roadId, "lane", [link.to.laneId, link.from.laneId]);
                 meshB.userData.focusPosition = pb;
             }
@@ -498,6 +694,103 @@ export function buildLaneLinkMarkers(viewer, model, lookups, issues = []) {
         line.renderOrder = 4;
         viewer.markerGroup.add(line);
     }
+}
+
+function lanePairHoverTarget(link) {
+    const lanes = [{ roadId: String(link.from.roadId), laneId: link.from.laneId }];
+    if (link.to) {
+        lanes.push({ roadId: String(link.to.roadId), laneId: link.to.laneId });
+    }
+    return { type: "lanePair", lanes };
+}
+
+function buildJunctionHexSlots(links, lookups) {
+    const entries = [];
+    for (const link of links) {
+        if (link.source !== "junction") {
+            continue;
+        }
+        for (const sideName of ["from", "to"]) {
+            const side = link[sideName];
+            if (!side) {
+                continue;
+            }
+            const road = lookups.roadById.get(String(side.roadId));
+            const endpoint = road
+                ? laneCenterEndpoint(road, side.laneId, side.contact)
+                : null;
+            if (!road || !endpoint) {
+                continue;
+            }
+            entries.push({
+                link,
+                sideName,
+                road,
+                point: pullIntoRoad(road, side.contact, endpoint),
+                heading: roadHeadingAt(road, side.contact === "start" ? 0 : roadLength(road)),
+            });
+        }
+    }
+
+    const groups = [];
+    for (const entry of entries) {
+        let group = groups.find((candidate) => candidate.some((other) =>
+            Math.hypot(other.point.x - entry.point.x, other.point.y - entry.point.y) < 0.3
+        ));
+        if (!group) {
+            group = [];
+            groups.push(group);
+        }
+        group.push(entry);
+    }
+
+    const slots = new Map();
+    for (const group of groups) {
+        group.sort((a, b) => `${a.link.connectionId}:${a.sideName}`.localeCompare(`${b.link.connectionId}:${b.sideName}`));
+        const center = (group.length - 1) / 2;
+        const axis = {
+            x: -Math.sin(group[0].heading),
+            y: Math.cos(group[0].heading),
+        };
+        group.forEach((entry, index) => {
+            if (!slots.has(entry.link)) {
+                slots.set(entry.link, {});
+            }
+            const distance = (index - center) * 0.65;
+            slots.get(entry.link)[entry.sideName] = {
+                x: axis.x * distance,
+                y: axis.y * distance,
+            };
+        });
+    }
+    return slots;
+}
+
+function offsetJunctionHex(point, offset) {
+    if (offset == null) {
+        return point;
+    }
+    return {
+        x: point.x + offset.x,
+        y: point.y + offset.y,
+        z: point.z,
+    };
+}
+
+function separateExactJunctionHex(point, placed) {
+    let candidate = point;
+    if (placed.some((other) =>
+        Math.hypot(other.x - candidate.x, other.y - candidate.y) < 0.12
+    )) {
+        const offset = 0.65;
+        candidate = {
+            x: point.x + offset,
+            y: point.y,
+            z: point.z,
+        };
+    }
+    placed.push(candidate);
+    return candidate;
 }
 
 // Move a lane-end point slightly back into its own road along -/+s and lift
@@ -546,6 +839,8 @@ function stripGeometry(leftBoundary, rightBoundary) {
 export function buildRoadMeshes(viewer, model) {
     clearGroup(viewer.roadGroup);
     clearGroup(viewer.refLineGroup);
+    viewer.hoverTarget = null;
+    viewer.hoverGraph = buildHoverGraph(model);
 
     for (const road of model.roads) {
         const outlinePositions = [];
@@ -559,10 +854,13 @@ export function buildRoadMeshes(viewer, model) {
                     continue;
                 }
                 const color = LANE_TYPE_COLORS[String(lane.type).toLowerCase()] || LANE_TYPE_COLORS.none;
-                viewer.roadGroup.add(new THREE.Mesh(
+                const laneMesh = new THREE.Mesh(
                     geometry,
                     new THREE.MeshStandardMaterial({ color, roughness: 0.92, metalness: 0.02, side: THREE.DoubleSide })
-                ));
+                );
+                laneMesh.userData.hoverRoadId = String(road.id);
+                laneMesh.userData.hoverLaneId = lane.id;
+                viewer.roadGroup.add(laneMesh);
 
                 // Collect lane boundary polylines for the outline.
                 appendPolyline(outlinePositions, left);
@@ -703,6 +1001,20 @@ function makeLabelTexture(text, colorHex, shape) {
         ctx.arcTo(x0, y0 + h, x0, y0, r);
         ctx.arcTo(x0, y0, x0 + w, y0, r);
         ctx.closePath();
+    } else if (shape === "hexagon") {
+        // Regular hexagon — marks lane links declared in junction XML.
+        const cx = size / 2, cy = size / 2, r = size / 2 - 14;
+        for (let i = 0; i < 6; i += 1) {
+            const angle = (i * Math.PI) / 3;
+            const px = cx + r * Math.cos(angle);
+            const py = cy + r * Math.sin(angle);
+            if (i === 0) {
+                ctx.moveTo(px, py);
+            } else {
+                ctx.lineTo(px, py);
+            }
+        }
+        ctx.closePath();
     } else if (shape === "triangle") {
         // Equilateral triangle pointing up (+s direction of the road).
         const cx = size / 2, cy = size / 2 + 14, r = size / 2 - 20;
@@ -746,7 +1058,9 @@ function addSurfaceLabel(group, text, colorHex, x, y, z, sizeMeters, shape, rota
     try {
         const geometry = shape === "square"
             ? new THREE.PlaneGeometry(sizeMeters, sizeMeters)
-            : new THREE.CircleGeometry(sizeMeters / 2, 24);
+            : shape === "hexagon"
+                ? new THREE.CircleGeometry(sizeMeters / 2, 6)
+                : new THREE.CircleGeometry(sizeMeters / 2, 24);
         const material = new THREE.MeshBasicMaterial({
             map: makeLabelTexture(text, colorHex, shape || "circle"),
             transparent: true,
@@ -867,6 +1181,11 @@ export function buildJointMarkers(viewer, model, lookups, issues) {
     // counterpart) and carries no issue; the OTHER end — the road missing
     // the back link — owns the issue and shows it in red.
     for (const end of ends) {
+        // Connecting roads use junction lane-link hexagons instead of large
+        // generic road-end markers inside the crowded junction.
+        if (String(end.road.junction) !== "-1") {
+            continue;
+        }
         const hasLink = Boolean(end.link && end.link.elementId);
         let issue = issueForEnd(issues, end.road, end.endName, end.point, "road");
         // This end declared a link whose counterpart is missing?
@@ -1060,11 +1379,117 @@ function endpointOf(road, s) {
 // neutral gray keeps them apart from the green/red status markers.
 const ID_MARKER_COLOR = 0x6b7280;
 
+function collectJunctionLaneIdCenters(model) {
+    const centers = new Map();
+    for (const road of model.roads) {
+        const junctionId = String(road.junction);
+        if (junctionId === "-1") {
+            continue;
+        }
+        if (!centers.has(junctionId)) {
+            centers.set(junctionId, []);
+        }
+        const length = roadLength(road);
+        for (let sectionIndex = 0; sectionIndex < road.laneSections.length; sectionIndex += 1) {
+            const section = road.laneSections[sectionIndex];
+            const sectionEnd = road.laneSections[sectionIndex + 1]?.s ?? length;
+            const sectionMiddleS = (section.s + sectionEnd) * 0.5;
+            const ref = refPointAt(road, sectionMiddleS);
+            if (!ref) {
+                continue;
+            }
+            for (const lane of [...section.left, ...section.right]) {
+                if (lane.id === 0) {
+                    continue;
+                }
+                const halfWidth = laneWidthAt(lane, Math.max(sectionMiddleS - section.s, 0)) * 0.5;
+                if (halfWidth <= 0) {
+                    continue;
+                }
+                const sign = lane.id > 0 ? 1 : -1;
+                const t = laneOffsetAt(road, sectionMiddleS)
+                    + sign * (innerEdgeOffsetTotal(road, section, lane, sectionMiddleS) - halfWidth);
+                const point = offsetPoint(ref, t);
+                centers.get(junctionId).push(point);
+            }
+        }
+    }
+    return centers;
+}
+
 export function buildIdMarkers(viewer, model) {
+    const placedConnectingRoadIds = new Map();
+    const junctionLaneCenters = collectJunctionLaneIdCenters(model);
     for (const road of model.roads) {
         const len = roadLength(road);
         const inset = Math.min(4, len * 0.2);
         if (inset <= 0.1) {
+            continue;
+        }
+        const isJunctionRoad = String(road.junction) !== "-1";
+
+        if (isJunctionRoad) {
+            const middleS = len * 0.5;
+            const middleRef = refPointAt(road, middleS);
+            if (middleRef) {
+                const junctionKey = String(road.junction);
+                const placed = placedConnectingRoadIds.get(junctionKey) || [];
+                const laneCenters = junctionLaneCenters.get(junctionKey) || [];
+                const obstacles = [...placed, ...laneCenters];
+                const offsets = [0, 1.5, -1.5, 3, -3, 4.5, -4.5, 6, -6];
+                const labelPosition = offsets
+                    .map((offset) => {
+                        const s = Math.min(Math.max(middleS + offset, 0), len);
+                        const ref = refPointAt(road, s);
+                        const center = offsetPoint(ref, laneOffsetAt(road, s));
+                        return { ...center, heading: ref.hdg };
+                    })
+                    .map((candidate, index) => {
+                        const clearance = obstacles.length === 0
+                            ? Number.POSITIVE_INFINITY
+                            : Math.min(...obstacles.map((point) =>
+                                Math.hypot(candidate.x - point.x, candidate.y - point.y)
+                            ));
+                        return { candidate, clearance, index };
+                    })
+                    .sort((a, b) => {
+                        const aClear = a.clearance >= 1.1;
+                        const bClear = b.clearance >= 1.1;
+                        if (aClear !== bClear) {
+                            return aClear ? -1 : 1;
+                        }
+                        return a.index - b.index;
+                    })[0].candidate;
+                if (!placedConnectingRoadIds.has(junctionKey)) {
+                    placedConnectingRoadIds.set(junctionKey, []);
+                }
+                placedConnectingRoadIds.get(junctionKey).push(labelPosition);
+                setHoverTarget(addSurfaceLabel(viewer.markerGroup, String(road.id), ID_MARKER_COLOR, labelPosition.x, labelPosition.y, labelPosition.z + 0.05, 0.75, "square", headingRotation(labelPosition.heading)), { type: "road", roadId: String(road.id) });
+            }
+
+            for (let sectionIndex = 0; sectionIndex < road.laneSections.length; sectionIndex += 1) {
+                const section = road.laneSections[sectionIndex];
+                const sectionEnd = road.laneSections[sectionIndex + 1]?.s ?? len;
+                const sectionMiddleS = (section.s + sectionEnd) * 0.5;
+                const ref = refPointAt(road, sectionMiddleS);
+                if (!ref) {
+                    continue;
+                }
+                for (const lane of [...section.left, ...section.right]) {
+                    if (lane.id === 0) {
+                        continue;
+                    }
+                    const halfWidth = laneWidthAt(lane, Math.max(sectionMiddleS - section.s, 0)) * 0.5;
+                    if (halfWidth <= 0) {
+                        continue;
+                    }
+                    const laneSign = lane.id > 0 ? 1 : -1;
+                    const t = laneOffsetAt(road, sectionMiddleS)
+                        + laneSign * (innerEdgeOffsetTotal(road, section, lane, sectionMiddleS) - halfWidth);
+                    const p = offsetPoint(ref, t);
+                    setHoverTarget(addSurfaceLabel(viewer.markerGroup, String(lane.id), ID_MARKER_COLOR, p.x, p.y, p.z + 0.04, 0.6, "circle", headingRotation(ref.hdg)), { type: "lane", roadId: String(road.id), laneId: lane.id });
+                }
+            }
             continue;
         }
 
@@ -1075,7 +1500,8 @@ export function buildIdMarkers(viewer, model) {
                 continue;
             }
             const c = offsetPoint(ref, laneOffsetAt(road, s));
-            addSurfaceLabel(viewer.markerGroup, String(road.id), ID_MARKER_COLOR, c.x, c.y, c.z + 0.05, 1.1, "square", headingRotation(ref.hdg));
+            const roadLabelSize = String(road.junction) === "-1" ? 1.1 : 0.75;
+            setHoverTarget(addSurfaceLabel(viewer.markerGroup, String(road.id), ID_MARKER_COLOR, c.x, c.y, c.z + 0.05, roadLabelSize, "square", headingRotation(ref.hdg)), { type: "road", roadId: String(road.id) });
         }
 
         // Lane ID circles at BOTH ends of every lane section. The contact
@@ -1107,10 +1533,11 @@ export function buildIdMarkers(viewer, model) {
                         continue;
                     }
                     const laneSign = lane.id > 0 ? 1 : -1;
-                    const t = laneSign * (laneOffsetAt(road, sLabel)
-                        + innerEdgeOffsetTotal(road, section, lane, sLabel) - halfWidth);
+                    const t = laneOffsetAt(road, sLabel)
+                        + laneSign * (innerEdgeOffsetTotal(road, section, lane, sLabel) - halfWidth);
                     const p = offsetPoint(ref, t);
-                    addSurfaceLabel(viewer.markerGroup, String(lane.id), ID_MARKER_COLOR, p.x, p.y, p.z + 0.04, 0.9, "circle", headingRotation(ref.hdg));
+                    const laneLabelSize = String(road.junction) === "-1" ? 0.9 : 0.6;
+                    setHoverTarget(addSurfaceLabel(viewer.markerGroup, String(lane.id), ID_MARKER_COLOR, p.x, p.y, p.z + 0.04, laneLabelSize, "circle", headingRotation(ref.hdg)), { type: "lane", roadId: String(road.id), laneId: lane.id });
                 }
             }
         }
@@ -1151,7 +1578,27 @@ export function buildJunctionIdMarkers(viewer, model) {
         cx /= points.length;
         cy /= points.length;
         cz /= points.length;
-        addSurfaceLabel(viewer.markerGroup, String(junction.id), JUNCTION_ID_MARKER_COLOR, cx, cy, cz + 0.06, 1.4, "square", 0);
+
+        const connectingCenters = model.roads
+            .filter((road) => String(road.junction) === String(junction.id))
+            .map((road) => refPointAt(road, roadLength(road) * 0.5))
+            .filter(Boolean);
+        const candidates = [
+            { x: cx, y: cy },
+            { x: cx + 2.5, y: cy },
+            { x: cx - 2.5, y: cy },
+            { x: cx, y: cy + 2.5 },
+            { x: cx, y: cy - 2.5 },
+        ];
+        const labelPosition = candidates.reduce((best, candidate) => {
+            const distance = connectingCenters.length === 0
+                ? Number.POSITIVE_INFINITY
+                : Math.min(...connectingCenters.map((point) =>
+                    Math.hypot(candidate.x - point.x, candidate.y - point.y)
+                ));
+            return distance > best.distance ? { candidate, distance } : best;
+        }, { candidate: candidates[0], distance: -1 }).candidate;
+        addSurfaceLabel(viewer.markerGroup, String(junction.id), JUNCTION_ID_MARKER_COLOR, labelPosition.x, labelPosition.y, cz + 0.06, 0.9, "square", 0);
     }
 }
 

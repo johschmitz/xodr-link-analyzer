@@ -78,7 +78,7 @@ function compareEndpoints(roadA, contactA, roadB, contactB, tolerances, issues, 
     }
 
     const where = context.junctionId
-        ? `junction ${context.junctionId} (connection ${context.connectionId})`
+        ? `road ${roadA.id} and connecting road ${roadB.id} at junction ${context.junctionId} (connection ${context.connectionId})`
         : `${contactA} of road ${roadA.id} ↔ ${contactB} of road ${roadB.id}`;
     const location = {
         roadIds: [roadA.id, roadB.id],
