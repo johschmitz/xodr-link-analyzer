@@ -69,6 +69,34 @@ export function checkJunctionLaneLinks(model, lookups, issues) {
         // back across the junction boundary via the incoming road's lanes;
         // that routing belongs in the <connection>/<laneLink> of the junction.
         checkOutgoingSide(connectingByRoad, issues);
+
+        for (const roadId of incomingByRoad.keys()) {
+            const incoming = roadById.get(String(roadId));
+            checkJunctionArmLaneLinks(junction, incoming, issues);
+        }
+    }
+}
+
+function checkJunctionArmLaneLinks(junction, road, issues) {
+    for (const section of road.laneSections) {
+        for (const lane of [...section.left, ...section.right]) {
+            const links = [...lane.links.predecessor, ...lane.links.successor];
+            if (lane.id === 0 || links.length === 0) {
+                continue;
+            }
+            issues.push({
+                severity: "warning",
+                category: "lane",
+                title: "Outgoing lane link on junction arm",
+                detail: `Junction ${junction.id}: road ${road.id} lane ${lane.id} declares a road-level lane link on a junction arm; outgoing lane linkage belongs on the connecting road, not on the arm, to avoid ambiguous predecessors or successors.`,
+                location: {
+                    roadIds: [road.id],
+                    laneIds: [lane.id],
+                    junctionId: junction.id,
+                    position: endpointLocation(road, junctionFacingEnd(road, junction.id)),
+                },
+            });
+        }
     }
 }
 
@@ -223,6 +251,33 @@ function checkConnectionLaneLinks(junction, connection, incoming, incomingEnd, c
     // contact point. When the connecting road declares predecessor/successor
     // lane links there, they must agree with the junction's laneLinks.
     checkConnectingRoadAgreement(junction, connection, incoming, incomingEnd, connecting, contactPoint, issues);
+    checkMissingConnectingRoadOutgoingLinks(junction, connection, connecting, contactPoint, issues);
+}
+
+function checkMissingConnectingRoadOutgoingLinks(junction, connection, connecting, contactPoint, issues) {
+    const farEnd = contactPoint === "start" ? "end" : "start";
+    const section = sectionAtContact(connecting, farEnd);
+    const forwardDir = farEnd === "end" ? "successor" : "predecessor";
+    const fedLaneIds = new Set(connection.laneLinks.map((laneLink) => laneLink.to));
+    for (const lane of [...section.left, ...section.right]) {
+        if (lane.id === 0 || !fedLaneIds.has(lane.id) || lane.links[forwardDir].length > 0) {
+            continue;
+        }
+        issues.push({
+            severity: "error",
+            category: "lane",
+            title: "Missing outgoing lane link on connecting road",
+            detail: `Junction ${junction.id} connection ${connection.id}: lane ${lane.id} of connecting road ${connecting.id} has no ${forwardDir} lane link to the outgoing road.`,
+            location: {
+                roadIds: [connecting.id],
+                laneIds: [lane.id],
+                junctionId: junction.id,
+                connectionId: connection.id,
+                contactPoint: farEnd,
+                position: endpointLocation(connecting, farEnd),
+            },
+        });
+    }
 }
 
 function checkJunctionLateralJump(junction, connection, incoming, incomingEnd, incomingLane, connecting, contactPoint, connectingLane, issues) {
@@ -247,6 +302,7 @@ function checkJunctionLateralJump(junction, connection, incoming, incomingEnd, i
             roadIds: [incoming.id, connecting.id],
             laneIds: [incomingLane.id, connectingLane.id],
             junctionId: junction.id,
+            connectionId: connection.id,
             position: endpointLocation(connecting, contactPoint),
         },
     });

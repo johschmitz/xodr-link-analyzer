@@ -52,10 +52,12 @@ that road's own `<link>` elements.
 | Duplicate junction laneLink | error | The same incoming lane is listed twice in one connection's `<laneLink>`s. |
 | Junction laneLink from unknown lane | error | `from` does not exist on the incoming road at its junction-facing end (wrong side / wrong section). |
 | Incoming road lane link | warning | The incoming road declares its own lane links toward the junction; that pairing is already defined by the junction's `<laneLink>` elements, so this is duplicate information. |
+| Outgoing lane link on junction arm | warning | A junction arm declares a road-level lane link; outgoing lane linkage belongs on the connecting road to avoid ambiguous predecessors or successors. |
 | Junction laneLink for outgoing direction | error | A `<laneLink>`'s `from` lane does not lead into the junction — the laneLink describes the outgoing driving direction, which belongs in the roads' own `<link>` elements, not the junction XML. |
 | Junction laneLink to unknown lane | error | `to` does not exist on the connecting road at the declared contact point. |
 | Unidirectional junction laneLink | error | The connecting road's lane does not link back to the incoming lane at the contact point, although it declares links there. |
 | Missing reverse lane link on connecting road | warning | A declared `laneLink` target lane has no reverse link while sibling lanes do — likely an oversight rather than intent. |
+| Missing outgoing lane link on connecting road | error | A connecting-road lane receives traffic through a junction `<laneLink>` but has no road-level link continuing to the outgoing road. |
 | Connecting road lane link mismatch | warning | The connecting road declares a lane link back to the incoming road at the junction contact point that no junction `<laneLink>` covers. |
 
 ## Geometrical linkage (`src/analysis/geometryLinks.js`)

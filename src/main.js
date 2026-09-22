@@ -1,5 +1,5 @@
 import { parseXodr } from "./xodr/parser.js";
-import { setWorldOffset } from "./xodr/geometry.js";
+import { junctionHeading, roadHeadingNearPosition, setWorldOffset } from "./xodr/geometry.js";
 import { analyze } from "./analysis/analyzer.js";
 import {
     createViewer,
@@ -56,8 +56,31 @@ function tolerances() {
 
 // Single place where the camera gets positioned for issue focus, used by
 // both the issue list and clicks on discs in the 3D view.
-function focusCameraOn(position) {
-    viewer.focusOn(position, 40);
+function focusCameraOn(position, heading = null) {
+    viewer.focusOn(position, 40, heading);
+}
+
+function issueHeading(issue) {
+    const position = issue.location?.position;
+    const directJunctionHeading = junctionHeading(currentModel, issue.location?.junctionId);
+    if (directJunctionHeading != null) {
+        return directJunctionHeading;
+    }
+    for (const roadId of issue.location?.roadIds || []) {
+        const road = currentModel?.roads.find((item) => String(item.id) === String(roadId));
+        const junctionFacing = [road?.predecessor, road?.successor].some((link) => link?.elementType === "junction");
+        if (String(road?.junction) !== "-1" || junctionFacing) {
+            const roadJunction = junctionHeading(currentModel, road?.junction);
+            const linkedJunction = [road?.predecessor, road?.successor]
+                .find((link) => link?.elementType === "junction");
+            return roadJunction ?? junctionHeading(currentModel, linkedJunction?.elementId);
+        }
+        const heading = roadHeadingNearPosition(road, position);
+        if (heading != null) {
+            return heading;
+        }
+    }
+    return null;
 }
 
 const errorPanel = createErrorPanel({
@@ -65,7 +88,7 @@ const errorPanel = createErrorPanel({
     filterCheckboxes: ui.filterCheckboxes,
     onSelect(issue) {
         const position = issue.location?.position;
-        focusCameraOn(position);
+        focusCameraOn(position, issueHeading(issue));
     },
 });
 
@@ -190,13 +213,13 @@ ui.closeInfoButton.addEventListener("click", () => {
 // Clicking a disc in the 3D view selects the linked issue (highlight in the
 // list) but centers the camera on the clicked disc's own position, so each
 // side of a link pair zooms to where you actually clicked.
-viewer.onMarkerClick(({ issueId, position }) => {
+viewer.onMarkerClick(({ issueId, position, heading }) => {
     if (issueId != null) {
         errorPanel.selectIssueSilently(issueId);
     } else {
         errorPanel.deselect();
     }
-    focusCameraOn(position);
+    focusCameraOn(position, heading);
 });
 
 function animate() {

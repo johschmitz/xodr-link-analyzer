@@ -72,9 +72,7 @@
         </center>
         <right>
           <lane id="-1" type="driving" level="false">
-            <link>
-              <predecessor id="-1"/>
-            </link>
+            <link/>
             <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
           </lane>
           <lane id="-2" type="sidewalk" level="false">
@@ -117,9 +115,7 @@
         </center>
         <right>
           <lane id="-1" type="driving" level="false">
-            <link>
-              <predecessor id="-1"/>
-            </link>
+            <link/>
             <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
           </lane>
         </right>
@@ -438,7 +434,9 @@
       <laneSection s="0">
         <left>
           <lane id="1" type="driving" level="false">
-            <link/>
+            <link>
+              <predecessor id="-1"/>
+            </link>
             <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
           </lane>
         </left>
@@ -541,7 +539,9 @@
     </lanes>
   </road>
   <road name="Conn S-N (straight)" id="103" length="20" junction="100">
-    <link/>
+    <link>
+      <successor elementType="road" elementId="12" contactPoint="start"/>
+    </link>
     <planView>
       <geometry s="0" x="620" y="5" hdg="1.5707963267948966" length="20">
         <line/>
@@ -558,7 +558,9 @@
         </center>
         <right>
           <lane id="-1" type="driving" level="false">
-            <link/>
+            <link>
+              <successor id="-1"/>
+            </link>
             <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
           </lane>
         </right>
@@ -566,7 +568,9 @@
     </lanes>
   </road>
   <road name="Conn N-S (straight)" id="104" length="20" junction="100">
-    <link/>
+    <link>
+      <successor elementType="road" elementId="11" contactPoint="end"/>
+    </link>
     <planView>
       <geometry s="0" x="620" y="25" hdg="4.71238898038469" length="20">
         <line/>
@@ -583,7 +587,9 @@
         </center>
         <right>
           <lane id="-1" type="driving" level="false">
-            <link/>
+            <link>
+              <successor id="1"/>
+            </link>
             <width sOffset="0" a="3.5" b="0" c="0" d="0"/>
           </lane>
         </right>
@@ -795,7 +801,7 @@
       <laneLink from="-1" to="-1"/>
     </connection>
     <connection id="1" incomingRoad="10" connectingRoad="102" contactPoint="start">
-      <laneLink from="1" to="-1"/>
+      <laneLink from="-1" to="-1"/>
     </connection>
     <connection id="2" incomingRoad="11" connectingRoad="103" contactPoint="start">
       <laneLink from="-1" to="-1"/>

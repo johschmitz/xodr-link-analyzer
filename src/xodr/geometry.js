@@ -288,6 +288,57 @@ export function roadLength(road) {
     return last ? last.s + last.length : 0;
 }
 
+// Finds the reference-line heading nearest to a rendered world position.
+// Issue locations can be laterally offset from the reference line, so the
+// closest sampled point is a better frame of reference than the global axes.
+export function roadHeadingNearPosition(road, position) {
+    if (!road || !position) {
+        return null;
+    }
+    const length = roadLength(road);
+    if (length <= 0) {
+        return null;
+    }
+    const steps = Math.max(2, Math.ceil(length / 2));
+    let nearest = null;
+    let nearestDistance = Infinity;
+    for (let i = 0; i <= steps; i += 1) {
+        const s = (length * i) / steps;
+        const ref = refPointAt(road, s);
+        if (!ref) {
+            continue;
+        }
+        const distance = (ref.x - position.x) ** 2 + (ref.y - position.y) ** 2;
+        if (distance < nearestDistance) {
+            nearest = ref;
+            nearestDistance = distance;
+        }
+    }
+    return nearest?.hdg ?? null;
+}
+
+// OpenDRIVE junctions do not have a heading of their own. Use the first
+// junction-facing arm in model order, with a connecting road as fallback.
+export function junctionHeading(model, junctionId) {
+    if (!model || junctionId == null || String(junctionId) === "-1") {
+        return null;
+    }
+    const id = String(junctionId);
+    for (const road of model.roads || []) {
+        for (const [endName, link] of [["predecessor", road.predecessor], ["successor", road.successor]]) {
+            if (link?.elementType !== "junction" || String(link.elementId) !== id) {
+                continue;
+            }
+            const ref = refPointAt(road, endName === "predecessor" ? 0 : roadLength(road));
+            if (ref) {
+                return ref.hdg;
+            }
+        }
+    }
+    const connectingRoad = (model.roads || []).find((road) => String(road.junction) === id);
+    return connectingRoad ? refPointAt(connectingRoad, 0)?.hdg ?? null : null;
+}
+
 // Lateral offset from the reference line. Positive t is to the LEFT of the
 // heading direction (OpenDRIVE convention).
 export function offsetPoint(ref, t) {

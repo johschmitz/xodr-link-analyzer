@@ -5,7 +5,7 @@ import { OrbitControls } from "three/addons/OrbitControls.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
-import { roadLength, sampleReferenceLine, sampleLaneBoundaries, refPointAt, laneWidthAt, laneOffsetAt, offsetPoint, roadEndMarkerPosition } from "./xodr/geometry.js";
+import { junctionHeading, roadLength, sampleReferenceLine, sampleLaneBoundaries, refPointAt, laneWidthAt, laneOffsetAt, offsetPoint, roadEndMarkerPosition } from "./xodr/geometry.js";
 import { collectLaneLinks, collectJunctionLaneLinks } from "./analysis/laneLinks.js";
 import { buildModel as buildLookups } from "./xodr/model.js";
 
@@ -119,15 +119,22 @@ export function createViewer(container) {
             controls.target.copy(target);
             controls.update();
         },
-        focusOn(position, span = 30) {
+        focusOn(position, span = 30, heading = null) {
             // No position → do nothing; zooming out to the full map would
             // lose the user's context entirely.
             if (!position) {
                 return;
             }
             const target = new THREE.Vector3(position.x, position.y, position.z);
-            // Look straight down from above so surface markers are readable.
-            camera.position.set(target.x, target.y - span * 0.25, target.z + span);
+            // Keep the camera directly above the marker for a true 2D view.
+            // Rotate the screen around its vertical axis so road +s points
+            // right, instead of tilting the camera sideways.
+            if (heading == null) {
+                camera.up.set(0, 1, 0);
+            } else {
+                camera.up.set(-Math.sin(heading), Math.cos(heading), 0);
+            }
+            camera.position.set(target.x, target.y, target.z + span);
             controls.target.copy(target);
             controls.update();
         },
@@ -155,8 +162,11 @@ export function createViewer(container) {
         pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
         pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
         raycaster.setFromCamera(pointer, camera);
-        const hit = raycaster.intersectObjects(markerGroup.children, false)
-            .filter((candidate) => candidate.object.visible && candidate.object.userData.hoverTarget)
+        const hit = raycaster.intersectObjects([...markerGroup.children, ...roadGroup.children], true)
+            .filter((candidate) => candidate.object.visible && (
+                candidate.object.userData.hoverTarget
+                || candidate.object.userData.hoverRoadId
+            ))
             .reduce((best, candidate) => {
                 if (!best) {
                     return candidate;
@@ -167,7 +177,13 @@ export function createViewer(container) {
                     ? candidate
                     : best;
             }, null);
-        const target = hit?.object.userData.hoverTarget || null;
+        const target = hit?.object.userData.hoverTarget || (hit
+            ? {
+                type: hit.object.userData.hoverLaneId == null ? "road" : "lane",
+                roadId: hit.object.userData.hoverRoadId,
+                ...(hit.object.userData.hoverLaneId == null ? {} : { laneId: hit.object.userData.hoverLaneId }),
+            }
+            : null);
         if (JSON.stringify(target) !== JSON.stringify(viewer.hoverTarget)) {
             viewer.hoverTarget = target;
             applyHoverHighlight(viewer);
@@ -210,8 +226,8 @@ export function createViewer(container) {
                 }
                 return hit.distance < best.distance ? hit : best;
             });
-            const { issueId = null, focusPosition } = topHit.object.userData;
-            clickHandler({ issueId, position: focusPosition });
+            const { issueId = null, focusPosition, focusHeading } = topHit.object.userData;
+            clickHandler({ issueId, position: focusPosition, heading: focusHeading });
         }
     });
 
@@ -282,6 +298,15 @@ function applyHoverHighlight(viewer) {
     }
 
     viewer.roadGroup.traverse((node) => {
+        if (node.userData.hoverDirectionArrow) {
+            const laneKey = hoverLaneKey(node.userData.hoverRoadId, node.userData.hoverLaneId);
+            const isPrimary = primaryLanes.has(laneKey);
+            const isSecondary = secondaryLanes.has(laneKey);
+            node.visible = isPrimary || isSecondary;
+            const color = isPrimary ? 0xf5c542 : 0x38bdf8;
+            node.userData.hoverDirectionArrow.setColor(color);
+            return;
+        }
         if (!node.isMesh || !node.userData.hoverRoadId) {
             return;
         }
@@ -535,6 +560,7 @@ const LANE_LINK_COLORS = {
     broken: 0xff3b30,
     error: 0xff3b30,
 };
+const JUNCTION_HEX_SIZE = 0.75;
 
 // World position of a lane's center line at a road end (start/end contact).
 function laneCenterEndpoint(road, laneId, contact) {
@@ -613,12 +639,12 @@ export function buildLaneLinkMarkers(viewer, model, lookups, issues = []) {
         const pa = laneCenterEndpoint(roadA, link.from.laneId, link.from.contact);
         let pb = null;
         let labelB = "!";
-        let labelA = String(link.from.laneId);
+        let labelA = link.to ? String(link.to.laneId) : "!";
         if (link.to) {
             const roadB = lookups.roadById.get(String(link.to.roadId));
             if (roadB) {
                 pb = laneCenterEndpoint(roadB, link.to.laneId, link.to.contact);
-                labelB = String(link.to.laneId);
+                labelB = String(link.from.laneId);
             }
         }
         if (!pa) {
@@ -626,15 +652,24 @@ export function buildLaneLinkMarkers(viewer, model, lookups, issues = []) {
         }
 
         const color = LANE_LINK_COLORS[link.status] || LANE_LINK_COLORS.broken;
+        const issueIdA = junctionArmIssueId(link, "from")
+            ?? nearestIssueId(currentIssuesRef.issues, pa, link.from.roadId, "lane", link.to ? [link.from.laneId, link.to.laneId] : [link.from.laneId], link, link.from.contact);
+        const lateralJump = isLateralJumpLink(link);
+        const missingRoadContinuation = link.source === "road" && link.to === null;
+        const junctionEdgeRoadLink = link.source === "road" && link.junctionId != null;
         // Unidirectional: the "!" sits on the side that DECLARED the link
         // (its outgoing link has no counterpart) and is red — a missing back
         // link is an error. The issue itself belongs to the OTHER road — the
         // one missing the link — so only that side's disc selects the issue.
         const unidirectional = link.status === "unidirectional";
-        let colorA = color;
-        if (unidirectional && pb) {
+        let colorA = missingRoadContinuation
+            ? LANE_LINK_COLORS.broken
+            : (lateralJump ? COLOR_WARN : color);
+        if (missingRoadContinuation) {
             labelA = "!";
-            colorA = LANE_LINK_COLORS.broken;
+        }
+        if (unidirectional && pb) {
+            labelB = "!";
         }
 
         // Junction-sourced links get two extra "!" cases:
@@ -656,18 +691,21 @@ export function buildLaneLinkMarkers(viewer, model, lookups, issues = []) {
         // Pull each disc back into its own road/lane so both sides are apart.
         let posA = pullIntoRoad(roadA, link.from.contact, pa);
         const headingA = roadHeadingAt(roadA, link.from.contact === "start" ? 0 : roadLength(roadA));
-        if (link.source === "junction") {
+        const sharedHeading = link.junctionId != null ? junctionHeading(model, link.junctionId) : null;
+        if (link.source === "junction" || junctionEdgeRoadLink) {
             posA = offsetJunctionHex(posA, junctionSlots.get(link)?.from);
             posA = separateExactJunctionHex(posA, placedJunctionHexes);
         }
-        const meshA = addSurfaceLabel(viewer.markerGroup, labelA, colorA, posA.x, posA.y, posA.z + 0.02, link.source === "junction" ? 0.75 : 1.3, shape, headingRotation(headingA));
+        const focusHeadingA = sharedHeading ?? headingA;
+        const smallEndpointMarker = link.source === "junction" || junctionEdgeRoadLink;
+        const meshA = addSurfaceLabel(viewer.markerGroup, labelA, colorA, posA.x, posA.y, posA.z + 0.02, smallEndpointMarker ? JUNCTION_HEX_SIZE : 1.3, shape, headingRotation(headingA), focusHeadingA);
         if (meshA) {
-            if (link.source === "junction") {
+            if (link.source === "junction" || junctionEdgeRoadLink) {
                 meshA.userData.hoverTarget = lanePairHoverTarget(link);
             }
             meshA.userData.issueId = unidirectional && pb
                 ? null
-                : nearestIssueId(currentIssuesRef.issues, pa, link.from.roadId, "lane", [link.from.laneId, link.to?.laneId]);
+                : issueIdA;
             meshA.userData.focusPosition = posA;
         }
 
@@ -681,19 +719,25 @@ export function buildLaneLinkMarkers(viewer, model, lookups, issues = []) {
             // this endpoint out sideways (perpendicular to the connecting
             // road) so overlapping junction geometry can't hide them.
             let sizeB = 1.3;
-            if (link.source === "junction") {
-                sizeB = 0.6;
+            if (link.source === "junction" || junctionEdgeRoadLink) {
+                sizeB = JUNCTION_HEX_SIZE;
                 const heading = roadHeadingAt(roadB, link.to.contact === "start" ? 0 : roadLength(roadB));
                 pb = offsetJunctionHex(pb, junctionSlots.get(link)?.to);
                 pb = separateExactJunctionHex(pb, placedJunctionHexes);
             }
             const headingB = roadHeadingAt(roadB, link.to.contact === "start" ? 0 : roadLength(roadB));
-            const meshB = addSurfaceLabel(viewer.markerGroup, labelB, color, pb.x, pb.y, pb.z + 0.02, sizeB, shape, headingRotation(headingB));
+            const focusHeadingB = sharedHeading ?? headingB;
+            const issueIdB = junctionArmIssueId(link, "to")
+                ?? nearestIssueId(currentIssuesRef.issues, pb, link.to.roadId, "lane", [link.to.laneId, link.from.laneId], link, link.to.contact);
+            const markerColorB = unidirectional
+                ? (junctionEdgeRoadLink ? LANE_LINK_COLORS.ok : LANE_LINK_COLORS.broken)
+                : (lateralJump ? COLOR_WARN : color);
+            const meshB = addSurfaceLabel(viewer.markerGroup, labelB, markerColorB, pb.x, pb.y, pb.z + 0.02, sizeB, shape, headingRotation(headingB), focusHeadingB);
             if (meshB) {
-                if (link.source === "junction") {
+                if (link.source === "junction" || junctionEdgeRoadLink) {
                     meshB.userData.hoverTarget = lanePairHoverTarget(link);
                 }
-                meshB.userData.issueId = nearestIssueId(currentIssuesRef.issues, pb, link.to.roadId, "lane", [link.to.laneId, link.from.laneId]);
+                meshB.userData.issueId = issueIdB;
                 meshB.userData.focusPosition = pb;
             }
         }
@@ -703,7 +747,11 @@ export function buildLaneLinkMarkers(viewer, model, lookups, issues = []) {
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
         const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({
-            color,
+            color: missingRoadContinuation
+                ? LANE_LINK_COLORS.broken
+                : lateralJump
+                ? COLOR_WARN
+                : color,
             depthTest: false,
             transparent: true,
             opacity: 0.95,
@@ -725,7 +773,7 @@ function lanePairHoverTarget(link) {
 function buildJunctionHexSlots(links, lookups) {
     const entries = [];
     for (const link of links) {
-        if (link.source !== "junction") {
+        if (link.source !== "junction" && !(link.source === "road" && link.junctionId != null)) {
             continue;
         }
         for (const sideName of ["from", "to"]) {
@@ -880,9 +928,33 @@ export function buildRoadMeshes(viewer, model) {
                 laneMesh.userData.hoverLaneId = lane.id;
                 viewer.roadGroup.add(laneMesh);
 
+                if (String(road.junction) !== "-1") {
+                    const middleS = (section.s + (road.laneSections[sectionIndex + 1]?.s ?? roadLength(road))) * 0.5;
+                    addLaneDirectionArrow(viewer, road, section, lane, middleS);
+                }
+
                 // Collect lane boundary polylines for the outline.
                 appendPolyline(outlinePositions, left);
                 appendPolyline(outlinePositions, right);
+            }
+        }
+
+        if (String(road.junction) === "-1") {
+            const length = roadLength(road);
+            const inset = Math.min(6, Math.max(3, length * 0.12));
+            const arrowPositions = [...new Set([
+                Math.min(inset, length * 0.5),
+                length * 0.5,
+                Math.max(length - inset, length * 0.5),
+            ])];
+            for (const position of arrowPositions) {
+                const section = sectionAtS(road, position);
+                if (!section) {
+                    continue;
+                }
+                for (const lane of [...section.left, ...section.right]) {
+                    addLaneDirectionArrow(viewer, road, section, lane, position);
+                }
             }
         }
 
@@ -970,6 +1042,75 @@ export function buildRoadMeshes(viewer, model) {
     buildJunctionOutlines(viewer, model);
 
     viewer.fitView();
+}
+
+function addLaneDirectionArrow(viewer, road, section, lane, position) {
+    const arrow = createLaneDirectionArrow(road, section, lane, position);
+    if (!arrow) {
+        return;
+    }
+    arrow.userData.hoverDirectionArrow = arrow;
+    arrow.userData.hoverRoadId = String(road.id);
+    arrow.userData.hoverLaneId = lane.id;
+    viewer.roadGroup.add(arrow);
+}
+
+// Creates a short arrow centered on the lane midpoint. The shaft follows the
+// lane's sampled coordinate system, so curved lanes produce curved arrows.
+function createLaneDirectionArrow(road, section, lane, middleS) {
+    const sectionEnd = road.laneSections[road.laneSections.indexOf(section) + 1]?.s ?? roadLength(road);
+    const span = Math.min(4, Math.max(2, (sectionEnd - section.s) * 0.25));
+    const travelSign = lane.id < 0 ? 1 : -1;
+    const startS = Math.max(section.s, middleS - travelSign * span * 0.5);
+    const endS = Math.min(sectionEnd, middleS + travelSign * span * 0.5);
+    const lowS = Math.min(startS, endS);
+    const highS = Math.max(startS, endS);
+    if (highS - lowS < 0.1) {
+        return null;
+    }
+
+    const samples = 6;
+    const points = [];
+    for (let i = 0; i <= samples; i += 1) {
+        const s = lowS + ((highS - lowS) * i) / samples;
+        const ref = refPointAt(road, s);
+        if (!ref) {
+            return null;
+        }
+        const halfWidth = laneWidthAt(lane, Math.max(s - section.s, 0)) * 0.5;
+        const sign = lane.id > 0 ? 1 : -1;
+        const t = laneOffsetAt(road, s)
+            + sign * (innerEdgeOffsetTotal(road, section, lane, s) - halfWidth);
+        const center = offsetPoint(ref, t);
+        points.push(new THREE.Vector3(center.x, center.y, center.z + 0.14));
+    }
+    if (travelSign < 0) {
+        points.reverse();
+    }
+
+    const group = new THREE.Group();
+    const shaftGeometry = new THREE.BufferGeometry().setFromPoints(points.slice(0, -1));
+    const shaft = new THREE.Line(shaftGeometry, new THREE.LineBasicMaterial({ color: 0xf5c542, depthTest: false, toneMapped: false }));
+    shaft.renderOrder = 8;
+    group.add(shaft);
+
+    const tip = points[points.length - 1];
+    const previous = points[points.length - 2];
+    const direction = tip.clone().sub(previous).normalize();
+    const head = new THREE.Mesh(
+        new THREE.ConeGeometry(0.45, 0.9, 8),
+        new THREE.MeshBasicMaterial({ color: 0xf5c542, depthTest: false, toneMapped: false })
+    );
+    head.position.copy(tip);
+    head.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
+    head.renderOrder = 8;
+    group.add(head);
+    group.visible = false;
+    group.setColor = (color) => {
+        shaft.material.color.set(color);
+        head.material.color.set(color);
+    };
+    return group;
 }
 
 export function setReferenceLinesVisible(viewer, visible) {
@@ -1072,7 +1213,7 @@ function makeLabelTexture(text, colorHex, shape) {
 }
 
 // Flat disc/square mesh lying on the road surface at (x, y, z).
-function addSurfaceLabel(group, text, colorHex, x, y, z, sizeMeters, shape, rotationZ = 0) {
+function addSurfaceLabel(group, text, colorHex, x, y, z, sizeMeters, shape, rotationZ = 0, focusHeading = null) {
     try {
         const geometry = shape === "square"
             ? new THREE.PlaneGeometry(sizeMeters, sizeMeters)
@@ -1097,6 +1238,7 @@ function addSurfaceLabel(group, text, colorHex, x, y, z, sizeMeters, shape, rota
         // Every clickable marker carries its own focus position so clicking
         // it can center the camera — independent of any attached issue.
         mesh.userData.focusPosition = { x, y, z };
+        mesh.userData.focusHeading = focusHeading;
         group.add(mesh);
         return mesh;
     } catch (error) {
@@ -1144,6 +1286,16 @@ function outwardDirectionAt(road) {
 function roadHeadingAt(road, s) {
     const ref = refPointAt(road, Math.min(Math.max(s, 0), roadLength(road)));
     return ref ? ref.hdg : null;
+}
+
+function junctionHeadingAtRoadEnd(model, road, endName) {
+    const link = endName === "predecessor" ? road.predecessor : road.successor;
+    if (String(road.junction) !== "-1") {
+        return junctionHeading(model, road.junction);
+    }
+    return link?.elementType === "junction"
+        ? junctionHeading(model, link.elementId)
+        : null;
 }
 
 // Extra mesh Z-rotation that aligns a marker's texture-up direction with
@@ -1222,13 +1374,15 @@ export function buildJointMarkers(viewer, model, lookups, issues) {
                 : (hasLink ? COLOR_OK : COLOR_OPEN);
         }
         const endHeading = roadHeadingAt(end.road, end.s);
-        const mesh = addSurfaceLabel(viewer.markerGroup, label, color, end.pos.x, end.pos.y, end.pos.z, 1.3, "square", headingRotation(endHeading));
+        const focusHeading = junctionHeadingAtRoadEnd(model, end.road, end.endName) ?? endHeading;
+        const mesh = addSurfaceLabel(viewer.markerGroup, label, color, end.pos.x, end.pos.y, end.pos.z, 1.3, "square", headingRotation(endHeading), focusHeading);
         if (mesh) {
             // Only attach this end's OWN issue — no nearest-issue fallback,
             // otherwise an open-end "!" marker would select an issue that
             // actually lives at the road's other end.
             mesh.userData.issueId = issue ? issue.id : null;
             mesh.userData.focusPosition = end.pos;
+            mesh.userData.focusHeading = focusHeading;
         }
     }
 
@@ -1262,8 +1416,9 @@ export function buildJointMarkers(viewer, model, lookups, issues) {
         const isEnd = refEnd.endName === "successor";
         const cpShape = isEnd ? "triangle" : "square";
         const cpHeading = roadHeadingAt(refEnd.road, isEnd ? roadLength(refEnd.road) : 0);
+        const cpFocusHeading = junctionHeadingAtRoadEnd(model, refEnd.road, isEnd ? "successor" : "predecessor") ?? cpHeading;
         const cpRotation = cpHeading == null ? 0 : cpHeading + Math.PI / 2;
-        const cp = addSurfaceLabel(viewer.markerGroup, "CP", 0x9aa0a6, point.x, point.y, point.z + 0.1, 0.9, cpShape, cpRotation);
+        const cp = addSurfaceLabel(viewer.markerGroup, "CP", 0x9aa0a6, point.x, point.y, point.z + 0.1, 0.9, cpShape, cpRotation, cpFocusHeading);
         if (cp) {
             cp.userData.issueId = cpIssue ? cpIssue.id : nearestIssueId(issues, point, first.road.id, "geometry");
             cp.userData.focusPosition = { x: point.x, y: point.y, z: point.z + 0.1 };
@@ -1313,6 +1468,36 @@ function issueForEnd(issues, road, endName, point, preferredCategory) {
     return pickNearest(candidates.filter((i) => i.category === preferredCategory && belongs(i)));
 }
 
+function junctionArmIssueId(link, sideName) {
+    if (!link.to || link.junctionId == null) {
+        return null;
+    }
+    const side = link[sideName];
+    const issue = currentIssuesRef.issues.find((candidate) =>
+        candidate.title === "Outgoing lane link on junction arm"
+        && String(candidate.location?.junctionId) === String(link.junctionId)
+        && candidate.location?.roadIds?.some((id) => String(id) === String(side.roadId))
+        && candidate.location?.laneIds?.some((id) => String(id) === String(side.laneId))
+    );
+    return issue?.id ?? null;
+}
+
+function isLateralJumpLink(link) {
+    if (!link.to) {
+        return false;
+    }
+    const roadIds = [String(link.from.roadId), String(link.to.roadId)];
+    const laneIds = [String(link.from.laneId), String(link.to.laneId)];
+    return currentIssuesRef.issues.some((issue) =>
+        issue.title === "Lane link lateral jump"
+        && String(issue.location?.connectionId) === String(link.connectionId)
+        && issue.location?.roadIds?.length === 2
+        && roadIds.every((id) => issue.location.roadIds.some((candidate) => String(candidate) === id))
+        && issue.location?.laneIds?.length === 2
+        && laneIds.every((id) => issue.location.laneIds.some((candidate) => String(candidate) === id))
+    );
+}
+
 // ID of the issue matching a marker position. Issues carry the road IDs
 // they belong to, so we match by road membership first (a disc on road X
 // should select an issue about road X even when the issue's stored position
@@ -1323,7 +1508,7 @@ function issueForEnd(issues, road, endName, point, preferredCategory) {
 // issues at one joint share the same position, so distance alone cannot
 // tell them apart. Distance is only a fallback for issues without road IDs
 // (e.g. section-transition issues).
-function nearestIssueId(issues, point, roadId = null, category = null, laneIds = null) {
+function nearestIssueId(issues, point, roadId = null, category = null, laneIds = null, link = null, contact = null) {
     let candidates = issues;
     if (category === "lane") {
         const byCategory = candidates.filter((i) => i.category === "lane");
@@ -1341,16 +1526,40 @@ function nearestIssueId(issues, point, roadId = null, category = null, laneIds =
         let byRoad = candidates.filter((i) =>
             Array.isArray(i.location?.roadIds)
             && i.location.roadIds.some((id) => String(id) === String(roadId)));
-        if (laneIds && byRoad.length > 1) {
+        if (laneIds) {
             const byLanePair = byRoad.filter((i) =>
                 Array.isArray(i.location?.laneIds)
-                && i.location.laneIds.some((id) => String(id) === String(laneIds[0]))
-                && i.location.laneIds.some((id) => String(id) === String(laneIds[1])));
+                && laneIds.every((laneId) => i.location.laneIds.some((id) => String(id) === String(laneId))));
             if (byLanePair.length > 0) {
                 byRoad = byLanePair;
+            } else {
+                return null;
             }
         }
+        if (link?.connectionId != null) {
+            byRoad = byRoad.filter((issue) =>
+                String(issue.location?.connectionId) === String(link.connectionId)
+            );
+        }
+        if (contact != null) {
+            byRoad = byRoad.filter((issue) =>
+                issue.title !== "Missing outgoing lane link on connecting road"
+                || issue.location?.contactPoint === contact
+            );
+        }
         if (byRoad.length > 0) {
+            if (category === "lane" && laneIds) {
+                const preferredTitles = link?.to == null
+                    ? ["Missing outgoing lane link on connecting road"]
+                    : link?.status === "unidirectional"
+                        ? ["Unidirectional lane link", "Unidirectional junction laneLink"]
+                        : [];
+                const preferredIssue = byRoad.find((issue) => preferredTitles.includes(issue.title));
+                if (preferredIssue) {
+                    return preferredIssue.id;
+                }
+                return byRoad[0].id;
+            }
             // Prefer the issue whose stored position is closest to the disc.
             let best = byRoad[0];
             let bestDist = Infinity;
@@ -1364,6 +1573,12 @@ function nearestIssueId(issues, point, roadId = null, category = null, laneIds =
             }
             return best.id;
         }
+        if (laneIds) {
+            return null;
+        }
+    }
+    if (category === "lane" && laneIds) {
+        return null;
     }
     let best = null;
     let bestDist = 2.0;
@@ -1482,7 +1697,8 @@ export function buildIdMarkers(viewer, model) {
                     placedConnectingRoadIds.set(junctionKey, []);
                 }
                 placedConnectingRoadIds.get(junctionKey).push(labelPosition);
-                setHoverTarget(addSurfaceLabel(viewer.markerGroup, String(road.id), ID_MARKER_COLOR, labelPosition.x, labelPosition.y, labelPosition.z + 0.05, 0.75, "square", headingRotation(labelPosition.heading)), { type: "road", roadId: String(road.id) });
+                const focusHeading = junctionHeading(model, road.junction) ?? labelPosition.heading;
+                setHoverTarget(addSurfaceLabel(viewer.markerGroup, String(road.id), ID_MARKER_COLOR, labelPosition.x, labelPosition.y, labelPosition.z + 0.05, 0.75, "square", headingRotation(labelPosition.heading), focusHeading), { type: "road", roadId: String(road.id) });
             }
 
             for (let sectionIndex = 0; sectionIndex < road.laneSections.length; sectionIndex += 1) {
@@ -1505,7 +1721,8 @@ export function buildIdMarkers(viewer, model) {
                     const t = laneOffsetAt(road, sectionMiddleS)
                         + laneSign * (innerEdgeOffsetTotal(road, section, lane, sectionMiddleS) - halfWidth);
                     const p = offsetPoint(ref, t);
-                    setHoverTarget(addSurfaceLabel(viewer.markerGroup, String(lane.id), ID_MARKER_COLOR, p.x, p.y, p.z + 0.04, 0.6, "circle", headingRotation(ref.hdg)), { type: "lane", roadId: String(road.id), laneId: lane.id });
+                    const focusHeading = junctionHeading(model, road.junction) ?? ref.hdg;
+                    setHoverTarget(addSurfaceLabel(viewer.markerGroup, String(lane.id), ID_MARKER_COLOR, p.x, p.y, p.z + 0.04, 0.6, "circle", headingRotation(ref.hdg), focusHeading), { type: "lane", roadId: String(road.id), laneId: lane.id });
                 }
             }
             continue;
@@ -1519,7 +1736,8 @@ export function buildIdMarkers(viewer, model) {
             }
             const c = offsetPoint(ref, laneOffsetAt(road, s));
             const roadLabelSize = String(road.junction) === "-1" ? 1.1 : 0.75;
-            setHoverTarget(addSurfaceLabel(viewer.markerGroup, String(road.id), ID_MARKER_COLOR, c.x, c.y, c.z + 0.05, roadLabelSize, "square", headingRotation(ref.hdg)), { type: "road", roadId: String(road.id) });
+            const focusHeading = junctionHeading(model, road.junction) ?? ref.hdg;
+            setHoverTarget(addSurfaceLabel(viewer.markerGroup, String(road.id), ID_MARKER_COLOR, c.x, c.y, c.z + 0.05, roadLabelSize, "square", headingRotation(ref.hdg), focusHeading), { type: "road", roadId: String(road.id) });
         }
 
         // Lane ID circles at BOTH ends of every lane section. The contact
@@ -1555,7 +1773,8 @@ export function buildIdMarkers(viewer, model) {
                         + laneSign * (innerEdgeOffsetTotal(road, section, lane, sLabel) - halfWidth);
                     const p = offsetPoint(ref, t);
                     const laneLabelSize = String(road.junction) === "-1" ? 0.9 : 0.6;
-                    setHoverTarget(addSurfaceLabel(viewer.markerGroup, String(lane.id), ID_MARKER_COLOR, p.x, p.y, p.z + 0.04, laneLabelSize, "circle", headingRotation(ref.hdg)), { type: "lane", roadId: String(road.id), laneId: lane.id });
+                    const focusHeading = junctionHeading(model, road.junction) ?? ref.hdg;
+                    setHoverTarget(addSurfaceLabel(viewer.markerGroup, String(lane.id), ID_MARKER_COLOR, p.x, p.y, p.z + 0.04, laneLabelSize, "circle", headingRotation(ref.hdg), focusHeading), { type: "lane", roadId: String(road.id), laneId: lane.id });
                 }
             }
         }

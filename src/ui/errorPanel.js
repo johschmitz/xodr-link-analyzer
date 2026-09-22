@@ -102,6 +102,8 @@ export function createErrorPanel({ listElement, filterCheckboxes, onSelect }) {
         "Junction laneLink from unknown lane",
         "Junction laneLink to unknown lane",
         "Missing reverse lane link on connecting road",
+        "Missing outgoing lane link on connecting road",
+        "Outgoing lane link on junction arm",
         "Unidirectional junction laneLink",
     ];
 

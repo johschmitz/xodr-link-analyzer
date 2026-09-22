@@ -271,7 +271,7 @@ export function collectJunctionLaneLinks(model, lookups) {
                     connectionId: connection.id,
                 });
             }
-            collectConnectionOutgoingSide(junction, connection, connecting, contactPoint, lookups, links);
+            collectConnectionOutgoingSide(junction, connection, connecting, contactPoint, links);
         }
     }
     return links;
@@ -281,67 +281,30 @@ export function collectJunctionLaneLinks(model, lookups) {
 // the connecting road must express its continuation through its OWN lane
 // <link> elements toward the next road, and that road's lanes must link
 // back. Emits one descriptor per declared link (ok / unidirectional / broken
-// stub) plus a broken stub for every lane that RECEIVES traffic via this
-// connection's <laneLink>s but declares no outgoing link at all — so a
-// missing continuation never goes visually unnoticed.
-function collectConnectionOutgoingSide(junction, connection, connecting, contactPoint, lookups, links) {
-    const { roadById } = lookups;
+// stub).
+function collectConnectionOutgoingSide(junction, connection, connecting, contactPoint, links) {
     const farEnd = contactPoint === "start" ? "end" : "start";
-    const outwardRoadLink = farEnd === "end" ? connecting.successor : connecting.predecessor;
-    const outgoing = outwardRoadLink && outwardRoadLink.elementId
-        ? roadById.get(String(outwardRoadLink.elementId))
-        : null;
-    const backContact = outwardRoadLink?.contactPoint === "end" ? "end" : "start";
-
     const farSection = sectionAtContact(connecting, farEnd);
     const lanesC = [...farSection.left, ...farSection.right].filter((l) => l.id !== 0);
     const forwardDir = farEnd === "end" ? "successor" : "predecessor";
-    const backwardDir = farEnd === "end" ? "predecessor" : "successor";
-
-    // Lanes that receive traffic through this connection (junction laneLink "to").
-    const fedLaneIds = new Set(connection.laneLinks.map((ll) => ll.to));
+    const fedLaneIds = new Set(connection.laneLinks.map((laneLink) => laneLink.to));
 
     for (const lane of lanesC) {
         const outLinks = lane.links[forwardDir];
-        if (outLinks.length === 0) {
-            if (fedLaneIds.has(lane.id)) {
-                links.push({
-                    from: { roadId: connecting.id, laneId: lane.id, contact: farEnd },
-                    to: null,
-                    status: "broken",
-                    source: "junction",
-                    junctionId: junction.id,
-                    connectionId: connection.id,
-                });
-            }
-            continue;
-        }
-
-        const outSection = outgoing ? sectionAtContact(outgoing, backContact) : null;
-        const outLanes = outSection ? [...outSection.left, ...outSection.right] : [];
-        for (const outLink of outLinks) {
-            const laneO = outLanes.find((l) => l.id === outLink.id);
-            if (!laneO) {
-                links.push({
-                    from: { roadId: connecting.id, laneId: lane.id, contact: farEnd },
-                    to: null,
-                    status: "broken",
-                    source: "junction",
-                    junctionId: junction.id,
-                    connectionId: connection.id,
-                });
-                continue;
-            }
-            const reciprocal = laneO.links[backwardDir].some((l) => l.id === lane.id);
+        if (outLinks.length === 0 && fedLaneIds.has(lane.id)) {
+            // Keep the outgoing lane endpoint visible as a road-level marker.
+            // It is not a junction laneLink and has no issue attached to it.
             links.push({
                 from: { roadId: connecting.id, laneId: lane.id, contact: farEnd },
-                to: { roadId: outgoing.id, laneId: laneO.id, contact: backContact },
-                status: reciprocal ? "ok" : "unidirectional",
-                source: "junction",
+                to: null,
+                status: "broken",
+                source: "road",
                 junctionId: junction.id,
                 connectionId: connection.id,
             });
+            continue;
         }
+
     }
 }
 
@@ -390,14 +353,22 @@ export function collectLaneLinks(model, lookups) {
                             from: { roadId: road.id, laneId: laneA.id, contact: thisContact },
                             to: null,
                             status: "broken",
+                            source: "road",
+                            junctionId: road.junction !== "-1" ? road.junction : null,
                         });
                         continue;
                     }
                     const reciprocal = laneB.links[backwardDir].some((l) => l.id === laneA.id);
+                    const junctionConnection = findJunctionConnection(model, road, target);
                     links.push({
                         from: { roadId: road.id, laneId: laneA.id, contact: thisContact },
                         to: { roadId: target.id, laneId: laneB.id, contact: backContact },
                         status: reciprocal ? "ok" : "unidirectional",
+                        source: "road",
+                        junctionId: road.junction !== "-1"
+                            ? road.junction
+                            : (target.junction !== "-1" ? target.junction : null),
+                        connectionId: junctionConnection?.id ?? null,
                     });
                 }
             }
@@ -405,6 +376,24 @@ export function collectLaneLinks(model, lookups) {
     }
 
     return links;
+}
+
+function findJunctionConnection(model, connectingRoad, outgoingRoad) {
+    if (connectingRoad.junction === "-1") {
+        return null;
+    }
+    const junction = model.junctions.find((item) => String(item.id) === String(connectingRoad.junction));
+    if (!junction) {
+        return null;
+    }
+    return junction.connections.find((connection) => {
+        if (String(connection.connectingRoad) !== String(connectingRoad.id)) {
+            return false;
+        }
+        const farEnd = connection.contactPoint === "start" ? "end" : "start";
+        const roadLink = farEnd === "end" ? connectingRoad.successor : connectingRoad.predecessor;
+        return String(roadLink?.elementId) === String(outgoingRoad.id);
+    }) ?? null;
 }
 
 function laneIdsSummary(lanes) {
