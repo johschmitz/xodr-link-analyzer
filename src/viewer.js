@@ -96,9 +96,27 @@ export function createViewer(container) {
             const size = new THREE.Vector3();
             box.getCenter(center);
             box.getSize(size);
-            const radius = Math.max(size.x, size.y, 10) * 0.7;
-            camera.position.set(center.x - radius, center.y - radius, radius * 0.8);
-            controls.target.copy(center);
+            const issuePanel = document.getElementById("errorPanel");
+            const panelVisible = issuePanel && issuePanel.offsetParent !== null;
+            const panelLeft = panelVisible
+                ? issuePanel.getBoundingClientRect().left
+                : window.innerWidth;
+            const visibleWidth = Math.max(panelLeft, window.innerWidth * 0.5);
+            const verticalFov = THREE.MathUtils.degToRad(camera.fov);
+            const horizontalFov = 2 * Math.atan(Math.tan(verticalFov * 0.5) * camera.aspect);
+            const distance = Math.max(
+                size.y / (2 * Math.tan(verticalFov * 0.5)),
+                (size.x * window.innerWidth / visibleWidth) / (2 * Math.tan(horizontalFov * 0.5)),
+                10
+            ) * 1.1;
+            const worldWidth = 2 * distance * Math.tan(horizontalFov * 0.5);
+            const target = center.clone();
+            target.x += ((window.innerWidth - visibleWidth) * 0.5) * worldWidth / window.innerWidth;
+            // Keep the scene's Z-up convention so OrbitControls does not
+            // reinterpret the axes after fitting the map from above.
+            camera.up.set(0, 0, 1);
+            camera.position.set(target.x, target.y - 0.001, target.z + distance);
+            controls.target.copy(target);
             controls.update();
         },
         focusOn(position, span = 30) {
