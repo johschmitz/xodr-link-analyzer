@@ -1,29 +1,22 @@
 // Overlapping-road check (R6): two roads whose reference lines run on top of
-// each other are only legal when they belong to a junction (e.g. connecting
-// roads crossing inside a junction) or touch a direct junction. Otherwise an
-// overlapping pair indicates duplicated geometry.
+// each other are only legal when both are junction connecting roads. Otherwise
+// an overlapping pair indicates duplicated geometry.
 
-import { refPointAt, roadLength } from "../xodr/geometry.js";
+import { refPointAt, roadLength, laneWidthAt } from "../xodr/geometry.js";
+import { sectionAt } from "../xodr/model.js";
 
 const SAMPLE_STEP = 1.0; // meters between samples along a reference line
-const MATCH_DIST = 0.5; // meters: sample counts as "on" the other road
-const MIN_OVERLAP_FRACTION = 0.3; // fraction of the shorter road that must match
+const ENDPOINT_MARGIN = 0.01; // meters: ignore only endpoint contact within 1 cm
+const MIN_LONGITUDINAL_OVERLAP = 0.01; // meters: require positive footprint overlap
 
 export function checkOverlappingRoads(model, lookups, issues) {
-    const { junctionById } = lookups;
-
     // Roads that are exempt from the check:
-    // - roads assigned to a junction (junction="-1" is a normal road)
-    // - roads whose predecessor/successor references a junction
+    // - connecting roads assigned to a junction (junction="-1" is a normal
+    //   road, including incoming and outgoing junction arms)
     const exempt = new Set();
     for (const road of model.roads) {
         if (road.junction !== undefined && String(road.junction) !== "-1") {
             exempt.add(String(road.id));
-        }
-        for (const link of [road.predecessor, road.successor]) {
-            if (link?.elementId && junctionById.has(String(link.elementId))) {
-                exempt.add(String(road.id));
-            }
         }
     }
 
@@ -31,7 +24,9 @@ export function checkOverlappingRoads(model, lookups, issues) {
         for (let j = i + 1; j < model.roads.length; j += 1) {
             const roadA = model.roads[i];
             const roadB = model.roads[j];
-            if (exempt.has(String(roadA.id)) || exempt.has(String(roadB.id))) {
+            // Only two connecting roads may legitimately overlap inside a
+            // junction. Junction arms remain subject to this check.
+            if (exempt.has(String(roadA.id)) && exempt.has(String(roadB.id))) {
                 continue;
             }
 
@@ -45,8 +40,8 @@ export function checkOverlappingRoads(model, lookups, issues) {
                 category: "road",
                 title: "Overlapping roads",
                 detail: `Roads ${roadA.id} and ${roadB.id} overlap over ${overlap.meters.toFixed(1)} m`
-                    + ` (${overlap.fraction * 100 | 0}% of the shorter road), but neither belongs to a junction`
-                    + ` nor connects to one. This usually means duplicated road geometry.`,
+                    + ` (${overlap.fraction * 100 | 0}% of the shorter road), but they are not both`
+                    + ` junction connecting roads. This usually means duplicated road geometry.`,
                 location: {
                     roadIds: [roadA.id, roadB.id],
                     position: overlap.midpoint,
@@ -62,6 +57,9 @@ function measureOverlap(roadA, roadB) {
     const lengthA = roadLength(roadA);
     const lengthB = roadLength(roadB);
     if (lengthA <= 0 || lengthB <= 0) {
+        return null;
+    }
+    if (!hasLongitudinalOverlap(roadA, roadB)) {
         return null;
     }
 
@@ -82,7 +80,7 @@ function measureOverlap(roadA, roadB) {
             continue;
         }
         total += 1;
-        if (pointOnReferenceLine(other, point)) {
+        if (pointOnRoadSurface(sampled, s, other, point)) {
             matches += 1;
             if (firstMatchS === null) {
                 firstMatchS = s;
@@ -91,7 +89,8 @@ function measureOverlap(roadA, roadB) {
         }
     }
 
-    if (total === 0 || matches / total < MIN_OVERLAP_FRACTION) {
+    const overlapMeters = (lastMatchS ?? 0) - (firstMatchS ?? 0);
+    if (matches === 0) {
         return null;
     }
 
@@ -99,25 +98,76 @@ function measureOverlap(roadA, roadB) {
     const midpoint = refPointAt(sampled, midS) || refPointAt(sampled, 0);
 
     return {
-        meters: ((lastMatchS ?? 0) - (firstMatchS ?? 0)),
+        meters: overlapMeters,
         fraction: matches / total,
         midpoint,
     };
 }
 
-// True if `point` lies within MATCH_DIST of any sample of `other`'s reference
-// line. Uses a coarse-to-fine walk with early exit.
-function pointOnReferenceLine(other, point) {
+function hasLongitudinalOverlap(roadA, roadB) {
+    const start = refPointAt(roadA, 0);
+    const end = refPointAt(roadA, roadLength(roadA));
+    const otherStart = refPointAt(roadB, 0);
+    const otherEnd = refPointAt(roadB, roadLength(roadB));
+    if (!start || !end || !otherStart || !otherEnd) {
+        return false;
+    }
+
+    const ux = Math.cos(start.hdg);
+    const uy = Math.sin(start.hdg);
+    const axis = (point) => point.x * ux + point.y * uy;
+    const rangeA = [axis(start), axis(end)].sort((a, b) => a - b);
+    const rangeB = [axis(otherStart), axis(otherEnd)].sort((a, b) => a - b);
+
+    return Math.min(rangeA[1], rangeB[1]) - Math.max(rangeA[0], rangeB[0])
+        >= MIN_LONGITUDINAL_OVERLAP;
+}
+
+// True if the two road footprints can overlap at this reference-line sample.
+// Comparing center-line distance with both road half-widths catches parallel
+// roads whose surfaces overlap even when their reference lines do not.
+function pointOnRoadSurface(sampled, sampledS, other, point) {
+    if (!isInterior(sampledS, roadLength(sampled))) {
+        return false;
+    }
+
     const length = roadLength(other);
     const steps = Math.max(2, Math.ceil(length / SAMPLE_STEP));
     for (let k = 0; k <= steps; k += 1) {
-        const candidate = refPointAt(other, (length * k) / steps);
+        const otherS = (length * k) / steps;
+        if (!isInterior(otherS, length)) {
+            continue;
+        }
+        const candidate = refPointAt(other, otherS);
         if (!candidate) {
             continue;
         }
-        if (Math.hypot(candidate.x - point.x, candidate.y - point.y) <= MATCH_DIST) {
+        const distance = Math.hypot(candidate.x - point.x, candidate.y - point.y);
+        const allowed = roadHalfWidthAt(sampled, sampledS) + roadHalfWidthAt(other, otherS);
+        if (distance <= allowed) {
             return true;
         }
     }
     return false;
+}
+
+function isInterior(s, length) {
+    return s >= ENDPOINT_MARGIN && s <= length - ENDPOINT_MARGIN;
+}
+
+function roadHalfWidthAt(road, s) {
+    const section = sectionAt(road, s);
+    if (!section) {
+        return 0;
+    }
+    const sIntoSection = Math.max(0, s - section.s);
+    const leftWidth = section.left.reduce(
+        (total, lane) => total + laneWidthAt(lane, sIntoSection),
+        0,
+    );
+    const rightWidth = section.right.reduce(
+        (total, lane) => total + laneWidthAt(lane, sIntoSection),
+        0,
+    );
+    return Math.max(leftWidth, rightWidth);
 }
